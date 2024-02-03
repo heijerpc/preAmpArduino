@@ -6,8 +6,6 @@
 #include "oledScreen.h"
 #include <Arduino.h>                                // needed for basis stuff
 
-const uint8_t ContrastLevel=0x3f;                   // level of contrast, between 00 anf ff, default is 7f
-
 const uint8_t Bitmaps[8][8] = {                     // array of bitmaps for large figures, copied and adapted from jos van eindhoven
   {//bitmap 0
   0x07, 0x0f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f},
@@ -75,9 +73,9 @@ void StoreLargecijfer()                          // function to store bitmaps fo
   }
 }
 
-void Oled_Scherm_Init()                          // intialistion of the oled screen after powerdown of screen.
+void OledSchermInit()                          // intialistion of the oled screen after powerdown of screen.
 {
-  delay(100);                                    // let SSD1311 finish internal POR
+  delay(200);                                    // let SSD1311 finish internal POR
   sendCommandOled(0x2E);                         // Function Set, set RE=1, enable double height
   sendCommandOled(0x08);                         // Extended Function Set, 5-dot, disable cursor-invert, 2-line mode
   sendCommandOled(0x72);                         // Function Selection B, first command, followed by data command
@@ -92,14 +90,12 @@ void Oled_Scherm_Init()                          // intialistion of the oled scr
   sendCommandOled(0x0C);                         // turn display ON, cursor OFF, blink OFF
 }
 
-
-
-void writeVolume(int volume)                     // write volume level to screen
+void setVolumeOled(int volume)                   // write volume level to screen
 {
-  volume = volume - Voloffset;                 // change volumelevel from 0 - 64 to (0 - offset)- to (64 - offset)
-  sendCommandOled(0xC0);                       // place cursor second row first character
+  volume = volume - Voloffset;                   // change volumelevel from 0 - 64 to (0 - offset)- to (64 - offset)
+  sendCommandOled(0xC0);                         // place cursor second row first character
   if (volume < 0) {                              // if volumlevel  is negative
-    sendDataOled(1);                           // minus sign
+    sendDataOled(1);                             // minus sign
   }
   else {
     sendDataOled(32);                          // no minus sign
@@ -107,21 +103,20 @@ void writeVolume(int volume)                     // write volume level to screen
   unsigned int lastdigit=abs(volume%10);
   unsigned int firstdigit=abs(volume/10);      // below needs to be rewritten to be more efficient
   sendCommandOled(0x81);
-  for (int c=0; c<3; c++){               // every bitmap consists out of 8 lines
+  for (int c=0; c<3; c++){               // write top of first figure
     sendDataOled(Cijfers[firstdigit][c]);  
   }
-  for (int c=0; c<3; c++){               // every bitmap consists out of 8 lines
+  for (int c=0; c<3; c++){               // write top of second figure
     sendDataOled(Cijfers[lastdigit][c]);  
   }
   sendCommandOled(0xC1);
-  for (int c=3; c<6; c++){               // every bitmap consists out of 8 lines
+  for (int c=3; c<6; c++){               // write bottem of first figure
     sendDataOled(Cijfers[firstdigit][c]);  
   }
-  for (int c=3; c<6; c++){               // every bitmap consists out of 8 lines
+  for (int c=3; c<6; c++){               // every botomm of last firege
   sendDataOled(Cijfers[lastdigit][c]);  
   }
 }
-
 
 void writeOLEDtopright(const char *OLED_string)   // write selected input channel to screen
 {
