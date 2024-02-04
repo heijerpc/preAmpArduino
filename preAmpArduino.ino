@@ -3,10 +3,14 @@
 // v0.3 optimize and change, adapt volume part for screen and rotator
 // v0.4 included functions to support relay, include 2 buttons (mute and channel) and restructured setup due to lack of readabilitie
 //
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// to do:
+// rotary geeft puls bij power on, staat op 31 ipv 30
+// codes toevoegen IR
+// relay aansturing
+// led aansturen
+// optimize code driving oled screen
 
-bool debugEnabled = true;                                    // define if debug is enabled, value should be changed in this line, either true or false
-bool Alive = true;                                           // alive defines if we are in standby mode or not
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // EEPROM related stuff to save volume level
 //#include "EEPROM.h"
@@ -17,22 +21,48 @@ bool Alive = true;                                           // alive defines if
 //float maximumLevelToSave = -30.0;
 //float currentSavedDbLevel;
 
-
-// IR stuff
-#include "IRremote.h"
-int RECV_PIN = A3;  // IR Receiver pin
-const int IRGroundPin = A4;
-const int IRPowerPin = A5;
-IRrecv irrecv(RECV_PIN);
-decode_results results;
-String lastIRoperation;
-float iRIncrement = 5;
-unsigned long timeOfLastIRChange;
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // general definitions 
 #include <Wire.h>                                     // include functions for i2c
-const char* initTekst = "V 0.4";
+const char* initTekst = "V 0.5";                      // current version of the code, shown in startscreen
+bool debugEnabled = true;                             // define if debug is enabled, value should be changed in this line, either true or false
+bool Alive = true;                                    // alive defines if we are in standby mode or acitve
+#define PowerOnOff  10                                // pin connected to the relay handeling power on/off of the amp
+#define ledStandby  11                                // connected to a led that is on if device is in standby
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// definitons for the IR receiver
+#include <IRremote.hpp>                               // include drivers for IR 
+#define IR_RECEIVE_PIN 9                              // datapin of IR is connected to pin 9
+#define apple_left 0x77E190                           //7856528
+#define apple_right 0x77E160                          //7856480
+#define apple_up 136                                  //7856464    0x77E150
+#define eindhoven_up 16 
+#define apple_down 140                                //7856464    0x77E130
+#define eindhoven_down 17
+#define apple_middle 0x77E1A0                         //7856544 
+#define apple_menu 0x77E1C0                           //7856576
+#define apple_repeat 0xFFFFFF                         // 16777215
+uint8_t lastcommand;                                  // preivious command coming from IR
+uint8_t delaytimer;                                       // timer to delay between volume changes, actual value set in main loop
+// decode_results results;
+// String lastIRoperation;
+// float iRIncrement = 5;
+unsigned long timeOfLastIRChange;
+// keycodes: (6 LSB bits)
+// numeric 0-9 : 0x00 - 0x09
+//    vol-  vol+ : 0x11 0x10
+//     ch-   ch+ : 0x21 0x20
+//   bal.l bal.r : 0x1b 0x1a
+//   mute  audio : 0x0d 0xcb
+//    stop  play : 0x36 0x35
+//pause pwrToggle: 0x30 0x0c
+//    left right : 0x55 0x56 // RC5X
+//       down up : 0x51 0x50 // RC5X
+// standby pwrOn : 0x3d 0x3f
+
+
+
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for the oled screen
@@ -83,9 +113,8 @@ const uint8_t Cijfers [10][6] = {                     // definitions of 0 till 9
   {0,6,2,32,32,31},
 };
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Relay attenuator stuff
+// definitions for the attenuator board
 #define MCP23017_I2C_ADDRESS 0x24                  // I2C address of the relay board
-const int AttenuatorCSPin = 10;
 int AttenuatorLevel = 30;                          // geluidssterkte bij initialisatie
 volatile int AttenuatorChange = 0;                 // change of volume out of interupt function
 bool muteEnabled = false;                          // status of Mute
@@ -130,25 +159,28 @@ void writeOLEDbottemright(const char *OLED_string);            // write tekst to
 void MCP23017init();                                           // init procedure for relay extender
 void setRelayChannel(uint8_t Word);                            // set relays to selected input channel
 void setRelayVolume(uint8_t Word);                             // set relays to selected volume level
+void changeStandby();                                          // moves from active to standby and back to active
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Setup
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup()
 {
-  delay(3000);                                                                // wait till all powered up
-  if (debugEnabled) {                                                       // if debuglevel on start monitor screen
+  digitalWrite(PowerOnOff, HIGH);                              // make pin of standby high, relays&screen on and power of amp is turned on
+  digitalWrite(ledStandby, LOW);                               // turn off standby led to indicate device is in powered on
+  delay(3000);                                                 // wait till all powered up
+  if (debugEnabled) {                                          // if debuglevel on start monitor screen
     Serial.begin (9600);
   }
-  Wire.begin();                                                             // open i2c channel
+  Wire.begin();                                                // open i2c channel
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // initialize the oled screen
-  OledSchermInit();                                                         // intialize the Oled screen
-  writeOLEDtopright(initTekst);                                             // write version number
+  OledSchermInit();                                            // intialize the Oled screen
+  writeOLEDtopright(initTekst);                                // write version number
   delay(1000);
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // initialize the relay extender
-  MCP23017init();                                                           // initialize the relays                                                              
+  MCP23017init();                                              // initialize the relays                                                              
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Set up pins for rotary:
   pinMode (rotaryPinA,INPUT_PULLUP);                                        // pin A rotary is high and its an input port
@@ -157,93 +189,158 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(rotaryPinA), rotaryTurn, RISING);   // if pin encoderA changes run rotaryTurn
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // IR
-  irrecv.enableIRIn(); // Start the receiver
-  pinMode(IRPowerPin, OUTPUT);
-  pinMode(IRGroundPin, OUTPUT);
-  digitalWrite(IRPowerPin, HIGH); // Power for the IR
-  digitalWrite(IRGroundPin, LOW); // GND for the IR
+  IrReceiver.begin(IR_RECEIVE_PIN);                                          // Start the IR receiver
 
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Button setup
-  pinMode (buttonMute, INPUT_PULLUP);
-  pinMode (buttonChannel, INPUT_PULLUP);
-  pinMode (buttonStandby, INPUT_PULLUP);
+  pinMode (buttonMute, INPUT_PULLUP);                                        //button to mute 
+  pinMode (buttonChannel, INPUT_PULLUP);                                     //button to change channel
+  pinMode (buttonStandby, INPUT_PULLUP);                                     //button to go into standby/active
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
   // // Set inital attenuator level
-  setRelayVolume(AttenuatorLevel);
-  setVolumeOled(AttenuatorLevel);
-  writeOLEDtopright(inputTekst[selectedInput-1]);
+  setRelayVolume(AttenuatorLevel);                                            //set the relays in the start volume
+  setVolumeOled(AttenuatorLevel);                                             //display volume level on oled screen
+  writeOLEDtopright(inputTekst[selectedInput-1]);                             //display input channel on oled screen
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
+  // general
+  pinMode (PowerOnOff, OUTPUT);                                               //control the relay that provides power to the rest of the amp
+  pinMode (ledStandby, OUTPUT);                                               //led will be on when device is in standby mode
 }
-
-
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Main loop
 //////////////////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
-  if (Alive) {
-    // Read the encoder and change volume, function is triggered by interupt who changes attenuatorchange
+  if (Alive) {                                              // we only react if we are in alive state, not in standby
     if (AttenuatorChange != 0) {                            // if AttenuatorChange is changed by the interupt we change  Volume
       changeVolume(AttenuatorChange);                       // Attenuatorchange is either pos or neg depending on rotation
       AttenuatorChange = 0;                                 // reset the value to 0
     }
-    if (digitalRead(buttonChannel) == LOW) {
-      changeInput();
-      delay(500);
+    if (digitalRead(buttonChannel) == LOW) {                // if button channel switch is pushed
+      delay(500);                                           // wait to prevent multiple switches
+      changeInput();                                        // change input channel
+
     }
-    if (digitalRead(buttonMute) == LOW) {
-      changeMute();
-      delay(500);
+    if (digitalRead(buttonMute) == LOW) {                   // if button mute is pushed
+      delay(500);                                           // wait to prevent multiple switches
+      changeMute();                                         // change status of mute
     }
   }
+  if (digitalRead(buttonStandby) == LOW) {                   // if button standby is is pushed
+      delay(500);                                            // wait to prevent multiple switches
+      changeStandby();                                       // changes status
+  }
+  if (IrReceiver.decode()) {                                 // if we receive data on the IR interface
+    if ((millis() - timeOfLastIRChange) < 300) {             // simple function to increase speed of volume change by reducing wait time
+      delaytimer=50;
+    } else {
+      delaytimer=200;
+    }
+ //   Serial.println(IrReceiver.decodedIRData.command);
+    switch (IrReceiver.decodedIRData.command){               // read the command field containing the code sent by the remote
+      case apple_up:
+      case eindhoven_up:
+        changeVolume(1);
+        delay(delaytimer);
+        break;
+      case apple_down:
+      case eindhoven_down:
+        changeVolume(-1);
+        delay(delaytimer);
+        break;
+    }
+ //   lastcommend=IrReceiver.decodedIRData.command;
+    timeOfLastIRChange = millis();                            // store time to detect if button is still pressed or not 
+    IrReceiver.resume();                                      // open IR receiver for next command
+  }
+}
   // Decode the IR if recieved
-  if (irrecv.decode(&results)) {
-    if (results.value == 2011287694) {
-      lastIRoperation = "volumeUp";
-      changeVolume(iRIncrement);
-      timeOfLastIRChange = millis();
-    }
-    if (results.value == 2011279502) {
-      lastIRoperation = "volumeDown";
-      changeVolume(-iRIncrement);
-      timeOfLastIRChange = millis();
-    }
-    if ((results.value == 2011291790) or (results.value == 2011238542)) {
-      lastIRoperation = "changeInput";
-      changeInput();
-      delay(500);
-      timeOfLastIRChange = millis();
-    }
-    if (results.value == 2011265678) {
-      lastIRoperation = "playPause";
-      changeMute();
-      timeOfLastIRChange = millis();
-    }
-    if (results.value == 4294967295 && lastIRoperation != "None") {
-      if (lastIRoperation == "volumeUp") { changeVolume(iRIncrement); timeOfLastIRChange = millis(); }
-      if (lastIRoperation == "volumeDown") { changeVolume(-iRIncrement); timeOfLastIRChange = millis(); }
-      if (lastIRoperation == "changeInput") { changeInput(); delay(500); timeOfLastIRChange = millis(); }
-      timeOfLastIRChange = millis();
-    }
-    irrecv.resume(); // Receive the next value
-  }
+  // if (irrecv.decode(&results)) {
+  //   if (results.value == 2011287694) {
+  //     lastIRoperation = "volumeUp";
+  //     changeVolume(iRIncrement);
+  //     timeOfLastIRChange = millis();
+  //   }
+  //   if (results.value == 2011279502) {
+  //     lastIRoperation = "volumeDown";
+  //     changeVolume(-iRIncrement);
+  //     timeOfLastIRChange = millis();
+  //   }
+  //   if ((results.value == 2011291790) or (results.value == 2011238542)) {
+  //     lastIRoperation = "changeInput";
+  //     changeInput();
+  //     delay(500);
+  //     timeOfLastIRChange = millis();
+  //   }
+  //   if (results.value == 2011265678) {
+  //     lastIRoperation = "playPause";
+  //     changeMute();
+  //     timeOfLastIRChange = millis();
+  //   }
+  //   if (results.value == 4294967295 && lastIRoperation != "None") {
+  //     if (lastIRoperation == "volumeUp") { changeVolume(iRIncrement); timeOfLastIRChange = millis(); }
+  //     if (lastIRoperation == "volumeDown") { changeVolume(-iRIncrement); timeOfLastIRChange = millis(); }
+  //     if (lastIRoperation == "changeInput") { changeInput(); delay(500); timeOfLastIRChange = millis(); }
+  //     timeOfLastIRChange = millis();
+  //   }
+  //   irrecv.resume(); // Receive the next value
+  // }
   //////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Read button state buttonChannel
 
 
 
-  // Set the time. This is used by other functions
-  unsigned long currentTime = millis();
-  // Stop IR repeating after timeout to stop interference from other remotes
-  if ((currentTime - timeOfLastIRChange) > 1000 && lastIRoperation != "None") {
-    lastIRoperation = "None";
+//   // Set the time. This is used by other functions
+//   unsigned long currentTime = millis();
+//   // Stop IR repeating after timeout to stop interference from other remotes
+//   if ((currentTime - timeOfLastIRChange) > 1000 && lastIRoperation != "None") {
+//     lastIRoperation = "None";
+//   }
+// }
+void changeStandby()
+{
+
+  if (Alive) {                                                     // move from alive to standby, turn off screen, relays and amp
+    if (debugEnabled) {
+      Serial.print (" changeStandby : moving from active to standby,  ");
+    }
+    Wire.end();                                                    // stop the i2c bus
+    delay(1000);                                                   // wait to stable state
+    digitalWrite(PowerOnOff, LOW);                                 // make pin of standby low, relay&screen off and power of amp is turned off
+    digitalWrite(ledStandby, HIGH);                                // turn on standby led to indicate device is in standby
+    delay (2000);                                                  // wait to stable state
+    if (debugEnabled) {
+      Serial.println (" status is now standby ");
+    }
+    Alive=false;                                                   // we are in standby, alive is false
+  } 
+  else {
+    if (debugEnabled) {
+      Serial.print (" changeStandby : moving from standby to active,  ");
+    }
+    digitalWrite(PowerOnOff, HIGH);                                // make pin of standby high, relays&screen on and power of amp is turned on
+    digitalWrite(ledStandby, LOW);                                 // turn off standby led to indicate device is in powered on
+    delay(3000);                                                   // we first wait for stable state
+    Wire.begin();                                                  // open i2c channel
+    delay(1000);                                                   // needed to get i2c channel stable
+    OledSchermInit();                                              // intialize the Oled screen
+    delay(100);
+    writeOLEDtopright(initTekst);                                  // write version number
+    delay(1000);                                                   // show the initTekst for a while
+    MCP23017init();                                                // initialize the relays
+    setRelayVolume(AttenuatorLevel);                               // set the relays in the start volume
+    setVolumeOled(AttenuatorLevel);                                // display volume level on oled screen
+    writeOLEDtopright(inputTekst[selectedInput-1]);                // display input channel on oled screen  
+    if (debugEnabled) {
+      Serial.println (" status is now active ");
+    }
+    Alive=true; 
   }
 }
-
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Interrupt Service Routine for a change to Rotary Encoder pin A
- void rotaryTurn()
+void rotaryTurn()
 {
   if (digitalRead (rotaryPinB)){
   	AttenuatorChange=-1;   // rotation left, turn volume down
@@ -371,6 +468,7 @@ void StoreLargecijfer()
 // intialistion of the oled screen after powerdown of screen.
 void OledSchermInit()                         
 {
+  delay(1000);
   sendCommandOled(0x2E);                         // Function Set, set RE=1, enable double height
   sendCommandOled(0x08);                         // Extended Function Set, 5-dot, disable cursor-invert, 2-line mode
   sendCommandOled(0x72);                         // Function Selection B, first command, followed by data command
