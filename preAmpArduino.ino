@@ -2,7 +2,7 @@
 // v0.2, integration of oled screen
 // v0.3 optimize and change, adapt volume part for screen and rotator
 // v0.4 included functions to support relay, include 2 buttons (mute and channel) and restructured setup due to lack of readabilitie
-//
+// v0.5 included IR support, fixed issue with LSB B bank controling volume. 
 // to do:
 // rotary geeft puls bij power on, staat op 31 ipv 30
 // codes toevoegen IR
@@ -43,10 +43,7 @@ bool Alive = true;                                    // alive defines if we are
 #define apple_menu 0x77E1C0                           //7856576
 #define apple_repeat 0xFFFFFF                         // 16777215
 uint8_t lastcommand;                                  // preivious command coming from IR
-uint8_t delaytimer;                                       // timer to delay between volume changes, actual value set in main loop
-// decode_results results;
-// String lastIRoperation;
-// float iRIncrement = 5;
+uint8_t delaytimer;                                   // timer to delay between volume changes, actual value set in main loop
 unsigned long timeOfLastIRChange;
 // keycodes: (6 LSB bits)
 // numeric 0-9 : 0x00 - 0x09
@@ -283,21 +280,7 @@ void loop()
   //     if (lastIRoperation == "volumeDown") { changeVolume(-iRIncrement); timeOfLastIRChange = millis(); }
   //     if (lastIRoperation == "changeInput") { changeInput(); delay(500); timeOfLastIRChange = millis(); }
   //     timeOfLastIRChange = millis();
-  //   }
-  //   irrecv.resume(); // Receive the next value
-  // }
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // Read button state buttonChannel
 
-
-
-//   // Set the time. This is used by other functions
-//   unsigned long currentTime = millis();
-//   // Stop IR repeating after timeout to stop interference from other remotes
-//   if ((currentTime - timeOfLastIRChange) > 1000 && lastIRoperation != "None") {
-//     lastIRoperation = "None";
-//   }
-// }
 void changeStandby()
 {
 
@@ -468,7 +451,7 @@ void StoreLargecijfer()
 // intialistion of the oled screen after powerdown of screen.
 void OledSchermInit()                         
 {
-  delay(1000);
+  delay(200);
   sendCommandOled(0x2E);                         // Function Set, set RE=1, enable double height
   sendCommandOled(0x08);                         // Extended Function Set, 5-dot, disable cursor-invert, 2-line mode
   sendCommandOled(0x72);                         // Function Selection B, first command, followed by data command
@@ -548,8 +531,8 @@ void setRelayVolume(uint8_t Word)
 // set relays in status to support requested channnel
 void setRelayChannel(uint8_t relay)             // send data to the display
 {
-  uint8_t inverseWord;
-  if (relay==0){
+  uint8_t inverseWord;                          
+  if (relay==0){                                // if no channel is selected, drop all ports, this is done during  mute
     inverseWord=0xff;
   }
   else{
@@ -561,18 +544,21 @@ void setRelayChannel(uint8_t relay)             // send data to the display
   Wire.endTransmission();
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//initialize the MCP23017 controling the relays; set I/O pins to outputs
+//initialize the MCP23017 controling the relays; set I/O pins to outputs; first do bank B, next A otherwise init fails. Default = icon=0
 void MCP23017init()
 {
   Wire.beginTransmission(MCP23017_I2C_ADDRESS);
+  Wire.write(0x01);                            // IODIRB register
+  Wire.write(0x00);                            // set all of port B to output
+  Wire.write(0x13);                            // gpioB
+  Wire.write(0xff);                            // set all ports first high, 
+  Wire.write(0x00);                            // set all ports low
   Wire.write(0x00);                            // IODIRA register
   Wire.write(0x00);                            // set all of port A to outputs
-  Wire.write(0x01);                            // IODIRB register
-  Wire.write(0x00);                            // set all of port B to outputs
   Wire.write(0x12);                            // gpioA
   Wire.write(0xFF);                            // set all ports high, low is active
-  Wire.write(0x13);                            // gpioB
-  Wire.write(0x00);                            // set all ports low, high is active
   Wire.endTransmission();
 }
+
+
 
