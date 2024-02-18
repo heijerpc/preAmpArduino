@@ -1,11 +1,21 @@
 # PreAmpArduino
 
 This is the Arduino code needed to support a design which will do the following:
-- select between 3 input ports
+- select between 4 input ports
 - 64 steps volume control
 - mute
-- standby
-- support output to steer relay powering (pre)AMP
+- standby mode
+- support output led to steer relay powering (pre)AMP
+- support output led to steer relay to switch passive and active
+- support output led steer relay to switch between amp and headphones
+- output led to light a LED if device is in standby
+- rotary for volume control
+- oled screen to show releveant info
+- support for balance, balance is turned off if headphones is active
+- balance is configurable via a menu
+- choice between a configurable generic volume level for startup or a volume level per input channel. All values are configurabel.
+- 
+- 
 
 Code is based on:
 - implementation of AMP's build by Jos van Eindhoven
@@ -13,10 +23,15 @@ Code is based on:
 
 current state:
 still in development, to be implemented
-1 per channel volume
-2 store settings in eeprom
-3 implement menu to change specific settings
-4 verify oled screen recovery after standby
+- ir codes
+- new oled screen
+- design and support for new oled screen
+- test of software
+- test of output ports, see if support using transistor works
+- setup menu is now only available via rotary, question if we should also support ir
+- 
+
+
 
 authors:
 Walter Widmer
@@ -25,9 +40,5 @@ Peter den Heijer
 
 open issues
 1 screen type. 
-2 switch between headphones and amp, implemnenteren met onthouden.en apart level
-3 balance yes/no, implementeren
-4 bypass preAmp ,implementeren. 
-5 standby setup, relays and screen powerless or standby state, spanning blijft er op
-6 ombouwen naar 2 ingangen, 
+
 
