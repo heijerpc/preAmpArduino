@@ -34,36 +34,23 @@ bool debugEnabled = true;                             // define if debug is enab
 bool Alive = true;                                    // alive defines if we are in standby mode or acitve
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitons for the IR receiver
+#define DECODE_NEC
 #include <IRremote.hpp>                               // include drivers for IR 
 #define IR_RECEIVE_PIN 2                              // datapin of IR is connected to pin 2
-#define apple_left 0x77E190                           //7856528
-#define apple_right 0x77E160                          //7856480
-#define apple_up 136                                  //7856464    0x77E150
-#define eindhoven_up 16 
-#define apple_down 140                                //7856464    0x77E130
-#define eindhoven_down 17
-#define apple_middle 0x77E1A0                         //7856544 
-#define apple_menu 0x77E1C0                           //7856576
-#define apple_repeat 0xFFFFFF                         // 16777215
+#define apple_left 8                                  // below the IR codes received for apple and ???
+#define eindhoven_left 33
+#define apple_right 7                               
+#define eindhoven_right 32
+#define apple_up 11                                 
+#define eindhoven_up 136
+#define apple_down 13                             
+#define eindhoven_down 140
+#define apple_middle 93                               
+#define apple_menu 2                                  
+#define apple_forward 94                              
 uint8_t lastcommand;                                  // previous command coming from IR, used within IR procedure
 uint8_t delaytimer;                                   // timer to delay between volume changes, actual value set in main loop
 unsigned long timeOfLastIRChange;                     // used within IR procedures to determine if command is repeat
-// keycodes: (6 LSB bits)
-// numeric 0-9 : 0x00 - 0x09
-//    vol-  vol+ : 0x11 0x10
-//     ch-   ch+ : 0x21 0x20
-//   bal.l bal.r : 0x1b 0x1a
-//   mute  audio : 0x0d 0xcb
-//    stop  play : 0x36 0x35
-//pause pwrToggle: 0x30 0x0c
-//    left right : 0x55 0x56 // RC5X
-//       down up : 0x51 0x50 // RC5X
-// standby pwrOn : 0x3d 0x3f
-
-
-
-
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for the oled screen
 #define OLED_Address 0x3C                             // 3C is address used by oled controler
@@ -73,8 +60,8 @@ const uint8_t ContrastLevel=0x3f;                     // level of contrast, betw
 const uint8_t Voloffset=0;                            // diffence between volumelevel and volumelevel displayed on the screen
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for the attenuator board
-#define MCP23017_I2C_ADDRESS_left 0x24             // I2C address of the relay board left
-#define MCP23017_I2C_ADDRESS_right 0x11            // I2C address of the relay board right
+#define MCP23017_I2C_ADDRESS_bottom 0x24           // I2C address of the relay board left
+#define MCP23017_I2C_ADDRESS_top 0x11            // I2C address of the relay board right
 int AttenuatorLevel;                                // geluidssterkte, wordt bij opstarten gezet aan de hand van waarde in EEPROM
 volatile int AttenuatorChange = 0;                 // change of volume out of interupt function
 bool muteEnabled = false;                          // status of Mute
@@ -105,7 +92,7 @@ const char* inputTekst[5] = {                      // definitions used to displa
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for the compiler as we have nested functions
 void changeMute();                                             // enable disable mute
-void changeInput();                                            // change the input channel
+void changeInput(int change);                                  // change the input channel
 void changeVolume(int increment);                              // verander volume
 void setMCP23Sxx ();                                           // initialize the i2c extenders 
 void rotaryTurn();                                             // interupt handler if rotary is turned
@@ -207,7 +194,7 @@ void loop()
     }
     if (digitalRead(buttonChannel) == LOW) {                // if button channel switch is pushed
       delay(500);                                           // wait to prevent multiple switches
-      changeInput();                                        // change input channel
+      changeInput(1);                                       // change input channel
     }
     if (digitalRead(buttonHeadphone) == LOW) {              // if button headphones switch is pushed
       delay(500);                                           // wait to prevent multiple switches
@@ -247,6 +234,29 @@ void loop()
         if (Alive) {                                         // we only react if we are in alive state, not in standby
           changeVolume(-1);
           delay(delaytimer);
+        }
+        break;
+      case apple_left:
+      case eindhoven_left:
+        if (Alive) {                                         // we only react if we are in alive state, not in standby
+           changeInput(-1);
+           delay(200);
+        }
+        break;
+      case apple_right:
+      case eindhoven_right: 
+        if (Alive) {                                         // we only react if we are in alive state, not in standby
+           changeInput(1);
+           delay(200);
+        }
+        break;       
+      case apple_forward:
+        changeStandby();
+        break;
+      case apple_middle:
+        if (Alive) {
+          changeMute(); 
+          delay(200); 
         }
         break;
     }
@@ -344,61 +354,61 @@ void setupMenu()
   char valueinchar[6];                                         // used for converting int to char
   int Vol;  
 //  set balance value
-  sendCommandOled(0x01);                                       // Clear Display and set DDRAM location 00h
-  writeOLEDtopright(" balance ");
-  writeOLEDmenu("x",200+InitData.BalanceOffset);                           // write current volumelevel init
-  while (digitalRead(rotaryButton)==HIGH) {
-    if (AttenuatorChange != 0) {   
-      InitData.BalanceOffset=InitData.BalanceOffset + AttenuatorChange;              // Attenuatorchange is either pos or neg depending on rotation
-      AttenuatorChange = 0; 
-      if (InitData.BalanceOffset > 6) {
+  sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
+  writeOLEDtopright(" balance ");                                 // write balance
+  writeOLEDmenu("x",200+InitData.BalanceOffset);                  // write current balance using position
+  while (digitalRead(rotaryButton)==HIGH) {                       // as long as rotary button not pressed
+    if (AttenuatorChange != 0) {                                  // if AttenuatorChange is changed using rotary 
+      InitData.BalanceOffset=InitData.BalanceOffset + AttenuatorChange;  // Attenuatorchange is either pos or neg depending on rotation
+      AttenuatorChange = 0;                                       // reset value
+      if (InitData.BalanceOffset > 6) {                           // keep value between -6 and 6
         InitData.BalanceOffset  = 6;
       }  
       if (InitData.BalanceOffset  < -6) {
         InitData.BalanceOffset = -6;
       }
       sendCommandOled(0x01);                                       // Clear Display and set DDRAM location 00h
-      writeOLEDtopright(" balance ");  
-      writeOLEDmenu("x",200+InitData.BalanceOffset);                           // write current volumelevel init
-      Serial.print("balanaceoffset");
-      Serial.println(InitData.BalanceOffset);
-      setRelayVolume(0); 
-      delay(15);      
-      setRelayVolume(AttenuatorLevel);
-      delay(500);
-
+      writeOLEDtopright(" balance ");                              // write balance
+      writeOLEDmenu("x",200+InitData.BalanceOffset);               // write the x on the correct position depending on offset
+      setRelayVolume(0);                                           // volume to 0
+      delay(15);                                                   // delay 15
+      setRelayVolume(AttenuatorLevel);                             // set new volume level with balance level
+      delay(500);                                                  // delay to prevent looping
     }
   }
   delay(1000);
 //  set vol per channel yes or no
   sendCommandOled(0x01);                                       // Clear Display and set DDRAM location 00h
   writeOLEDtopright("vol per channel");
-  if (InitData.VolPerChannel) {sprintf(valueinchar, "%s", "True");}
-  else {sprintf(valueinchar, "%s", "False");}
+  if (InitData.VolPerChannel) {sprintf(valueinchar, "%s", "Yes");}
+  else {sprintf(valueinchar, "%s", "No ");}
   writeOLEDmenu(valueinchar,200); 
   while (digitalRead(rotaryButton)==HIGH) {
     if (AttenuatorChange != 0) {  
       InitData.VolPerChannel=(!InitData.VolPerChannel);
       AttenuatorChange = 0; 
-      if (InitData.VolPerChannel) {sprintf(valueinchar, "%s", "True ");}
-      else {sprintf(valueinchar, "%s", "False");}
+      if (InitData.VolPerChannel) {sprintf(valueinchar, "%s", "Yes");}
+      else {sprintf(valueinchar, "%s", "No ");}
       writeOLEDmenu(valueinchar,200);
       delay(500);
     }
   }
-// set vol level
   delay(1000);
+// set vol level
   sendCommandOled(0x01);                                       // Clear Display and set DDRAM location 00h
-  for (int i=0; i<5; i++){
-    writeOLEDtopright(inputTekst[i]);                           // write the name of the variable we are changing
+  for (int i=0; i<5; i++){                                     // run loop for generic and 4 volumes per channel
+    if (i!=0) {                                                // use for the generic the channel thats used now
+      setRelayChannel(i);                                      // otherwise select the correct volume
+    }      
+    writeOLEDtopright(inputTekst[i]);                          // write the name of the variable we are changing
     Vol=VolLevels[i]-63+Voloffset;                             // vol is de value displayed on the screen
-    sprintf(valueinchar, "%d", Vol);                           // an array of chars showing volume level
+    sprintf(valueinchar, "%d", Vol);                           // create an array of chars showing volume level
     writeOLEDmenu(valueinchar,200);                            // write current volumelevel init
     while (digitalRead(rotaryButton)==HIGH) {                  // as long as rotary button not pressed
       if (AttenuatorChange != 0) {                             // if AttenuatorChange is changed using rotary
         VolLevels[i]=VolLevels[i]+AttenuatorChange;            // change Attenuator init
         AttenuatorChange = 0;                                  // reset attenuatorchange
-        if (VolLevels[i] > 63) {
+        if (VolLevels[i] > 63) {                               // code to keep attenuator between 0 and 63
           VolLevels[i] = 63;
         }  
         if (VolLevels[i] < 0) {
@@ -407,23 +417,30 @@ void setupMenu()
         Vol=VolLevels[i]-63+Voloffset;                         // vol is de value displayed on the screen
         sprintf(valueinchar, "%d", Vol);                       // write current volume to a array with chars
         writeOLEDmenu(valueinchar,200);                        // write volume init to screen
-        setRelayVolume(0);                                     // set volumelevel to new value
+        setRelayVolume(0);                                     // set volumelevel to new value, first go to 0
         delay(15);
         setRelayVolume(VolLevels[i]);                          // set volumelevel to new value
-      }
+      }                                                        // delay to prevent moving to fast
     }
-    AttenuatorLevel=VolLevels[i];                              // set volumelevel to latest level
-    if (!InitData.VolPerChannel) {                             // if we do not use volume per channel skip loop
-      i=5;
+    delay(500);
+    if (!InitData.VolPerChannel) {                             // if we do not use volume per channel skip for loop
+      delay(500);
+      break;
     }
   }
-  EEPROM.put(0,InitData);  
-  EEPROM.put(10,VolLevels); 
+  EEPROM.put(0,InitData);                                      // save new values
+  EEPROM.put(10,VolLevels);                                    // save volume levels
   sendCommandOled(0x01);                                       // Clear Display and set DDRAM location 00h
-  delay(2000);
-  setRelayVolume(AttenuatorLevel);                                           // set volume correct level
-  setVolumeOled(AttenuatorLevel);                                            //display volume level on oled screen
-  writeOLEDtopright(inputTekst[InitData.SelectedInput]);                   //display input channel on oled screen
+  setRelayChannel(InitData.SelectedInput);                     // set amp on prefered channel
+  if (InitData.VolPerChannel) {                                // choose volume level 
+    AttenuatorLevel=VolLevels[InitData.SelectedInput];
+  } else {
+    AttenuatorLevel=VolLevels[0];
+  }
+  setRelayVolume(0);                                           // set volume level to 0
+  setRelayVolume(AttenuatorLevel);                             // set volume correct level
+  setVolumeOled(AttenuatorLevel);                              //display volume level on oled screen
+  writeOLEDtopright(inputTekst[InitData.SelectedInput]);       //display input channel on oled screen
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // procedure to handle moving to and coming out of standby mode
@@ -478,13 +495,13 @@ void rotaryTurn()
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function to change to next inputchannel
-void changeInput()
+void changeInput(int change)
 {
   if (debugEnabled) {                                                       // if debug enabled write current state
     Serial.print (F(" changeInput: old selected Input: "));
     Serial.print (InitData.SelectedInput);
   }
-  InitData.SelectedInput++;                                                 // increase current channel by 1
+  InitData.SelectedInput=InitData.SelectedInput+change;                     // increase or decrease current channel by 1
   if (InitData.SelectedInput > 4) { InitData.SelectedInput = 1; }           // implement round robbin for channel number
   if (InitData.SelectedInput < 1) { InitData.SelectedInput = 4; }
   setRelayVolume(0);                                                        // set volume to zero
@@ -739,11 +756,11 @@ void setRelayVolume(int Volume) {
       if (VolumeRight < 0) VolumeRight = 0;                     // volume lower as 0 not allowed
       if (VolumeLeft < 0) VolumeLeft = 0;                       // volume lower as 0 not allowed
   }               
-  Wire.beginTransmission(MCP23017_I2C_ADDRESS_left);            // write volume left to left ladder
+  Wire.beginTransmission(MCP23017_I2C_ADDRESS_bottom);            // write volume left to left ladder
   Wire.write(0x13);
   Wire.write(VolumeLeft);
   Wire.endTransmission();
-  // Wire.beginTransmission(MCP23017_I2C_ADDRESS_right);          // write volume right to right ladder
+  // Wire.beginTransmission(MCP23017_I2C_ADDRESS_top);          // write volume right to right ladder
   // Wire.write(0x13);
   // Wire.write(VolumeRight);
   // Wire.endTransmission();
@@ -751,9 +768,9 @@ void setRelayVolume(int Volume) {
       Serial.print (F(" setRelayVolume : volume left = "));
       Serial.print (VolumeLeft);
       Serial.print (F(" ,volume right = "));
-      Serial.println (VolumeRight);
+      Serial.print (VolumeRight);
       Serial.print(F(",  headphones : "));
-      Serial.print(InitData.HeadphoneActive);
+      Serial.println (InitData.HeadphoneActive);
     }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -767,7 +784,7 @@ void setRelayChannel(uint8_t relay)
   else{
     inverseWord= 0xFF ^ (0x01 << (relay-1));    // bitshift the number of ports to get a 1 at the correct port and inverse word
   }
-  Wire.beginTransmission(MCP23017_I2C_ADDRESS_left);
+  Wire.beginTransmission(MCP23017_I2C_ADDRESS_bottom);
   Wire.write(0x12);
   Wire.write(inverseWord);
   Wire.endTransmission();
@@ -776,7 +793,7 @@ void setRelayChannel(uint8_t relay)
 //initialize the MCP23017 controling the relays; set I/O pins to outputs; first do bank B, next A otherwise init fails. Default = icon=0
 void MCP23017init()
 {
-  Wire.beginTransmission(MCP23017_I2C_ADDRESS_left);
+  Wire.beginTransmission(MCP23017_I2C_ADDRESS_bottom);
   Wire.write(0x01);                            // IODIRB register
   Wire.write(0x00);                            // set all of port B to output
   Wire.write(0x13);                            // gpioB
