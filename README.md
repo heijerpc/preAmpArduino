@@ -13,7 +13,7 @@ This is the Arduino code needed to support a design which will do the following:
 - oled screen to show releveant info
 - support for balance, balance is turned off if headphones is active
 - balance is configurable via a menu
-- choice between a configurable generic volume level for startup or a volume level per input channel. All values are configurabel.
+- choice between a configurable generic volume level for startup or a volume level per input channel. 	These are configurable.
 - 
 - 
 

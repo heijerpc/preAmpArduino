@@ -22,9 +22,10 @@ int VolLevels [5];                                    // Vollevels is an array s
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // general definitions 
 #include <Wire.h>                                     // include functions for i2c
-#define PowerOn     A0                                // pin connected to the relay handeling power on/off of the amp
-#define Headphone   A1                                // pin connected to the relay handeling headphones active / not active
+#define PowerOnOff     A0                             // pin connected to the relay handeling power on/off of the amp
+#define HeadphoneOnOff   A1                           // pin connected to the relay handeling headphones active / not active
 #define AmpPassiveState  A2                           // pin connected to the relay handeling passive/active state of amp
+#define Connect2Output A3                             // pin connected to the relay which connects amp to output
 #define ledStandby  11                                // connected to a led that is on if device is in standby
 const char* initTekst = "V 0.7";                      // current version of the code, shown in startscreen, content should be changed in this line
 bool debugEnabled = true;                             // define if debug is enabled, value should be changed in this line, either true or false
@@ -114,26 +115,17 @@ void setup()
 {
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
   // general
-  pinMode (PowerOn, OUTPUT);                                                //control the relay that provides power to the rest of the amp
+  pinMode (PowerOnOff, OUTPUT);                                             //control the relay that provides power to the rest of the amp
   pinMode (ledStandby, OUTPUT);                                             //led will be on when device is in standby mode
-  pinMode (Headphone, OUTPUT);                                              //control the relay that switches headphones on and off
+  pinMode (HeadphoneOnOff, OUTPUT);                                         //control the relay that switches headphones on and off
   pinMode (AmpPassiveState, OUTPUT);                                        //control the relay that switches the preamp between passive and active
-  digitalWrite(PowerOn, HIGH);                                              // make pin of standby high, relays&screen on and power of amp is turned on
+  pinMode (Connect2Output,OUTPUT);                                          //control the relay that connects amp to output ports
   digitalWrite(ledStandby, LOW);                                            // turn off standby led to indicate device is in powered on
-  digitalWrite(Headphone, LOW);                                             // make pin controling headphones low
-  digitalWrite(AmpPassiveState, LOW);                                       // turn the preamp in active state
-  delay(1000);                                                              // wait till all powered up
-  if (debugEnabled) {                                                       // if debuglevel on start monitor screen
-    Serial.begin (9600);
-  }
-  Wire.begin();                                                             // open i2c channel
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // initialize the oled screen
-  OledSchermInit();                                                         // intialize the Oled screen
-  WaitForXseconds();                                                        // wait to let amp warm up
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // initialize the relay extender
-  MCP23017init();                                                           // initialize the relays                                                              
+  digitalWrite(HeadphoneOnOff, LOW);                                        // turn headphones off
+  digitalWrite(AmpPassiveState, LOW);                                       // turn the preamp in active 
+  digitalWrite(Connect2Output, LOW);                                        // disconnect amp from output
+  digitalWrite(PowerOnOff, HIGH);                                           // turn amp on 
+  delay(2000);                                                              // wait till all powered up
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Set up pins for rotary:
   pinMode (rotaryPinA,INPUT_PULLUP);                                        // pin A rotary is high and its an input port
@@ -150,6 +142,22 @@ void setup()
   pinMode (buttonStandby, INPUT_PULLUP);                                     //button to go into standby/active
   pinMode (buttonHeadphone, INPUT_PULLUP);                                   //button to switch between AMP and headphone
   pinMode (buttonPassive, INPUT_PULLUP);                                     //button to switch between passive and active mode
+  if (debugEnabled) {                                                       // if debuglevel on start monitor screen
+    Serial.begin (9600);
+  }
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // initialize the oled screen and relay extender
+  Wire.begin();                                                             // open i2c channel
+  OledSchermInit();                                                         // intialize the Oled screen
+  MCP23017init();                                                           // initialize the relays  
+  setRelayVolume(0);                                                        //set volume relays to 0, just to be sure
+  delay(15);                                                                // wait to stabilize
+  setRelayChannel(0);                                                       // select stored input channel
+  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // wait till amp is stable
+  WaitForXseconds();                                                        // wait to let amp warm up 
+  digitalWrite(Connect2Output, HIGH);                                       // connect amp to output 
+  delay(100);                                                               // wait to stabilize
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// 
   // // Set inital setup amp depending on data stored within eeprom
   EEPROM.get(0, InitData);                                                   // get variables within init out of EEPROM
@@ -157,12 +165,10 @@ void setup()
   if (InitData.AmpPassive) {                                                 // if amppassive is active set port high to active relay
     digitalWrite(AmpPassiveState, HIGH);                                     // turn the preamp in passive mode
   }
-  setRelayVolume(0);                                                         //set volume relays to 0, just to be sure
-  delay(15);                                                                 // wait to stabilize
   setRelayChannel(InitData.SelectedInput);                                   // select stored input channel
   delay(15);                  
   if (InitData.HeadphoneActive) {                                            // headphone is active
-    digitalWrite(Headphone, HIGH);                                           // switch headphone relay on
+    digitalWrite(HeadphoneOnOff, HIGH);                                      // switch headphone relay on
   } 
   if (InitData.VolPerChannel) {                                              // if we have a dedicated volume level per channel give attenuatorlevel the correct value
     AttenuatorLevel=VolLevels[InitData.SelectedInput];                       // if vol per channel select correct level
@@ -285,7 +291,7 @@ void changeHeadphone()
     }
     setRelayVolume(0);                                                       // switch volume off
     delay(15);                                                              // wait to stabilize
-    digitalWrite(Headphone, LOW);                                            // switch headphone relay off
+    digitalWrite(HeadphoneOnOff, LOW);                                            // switch headphone relay off
     if (InitData.VolPerChannel) {                                            // if we have a dedicated volume level per channel give attenuatorlevel the correct value
       AttenuatorLevel=VolLevels[InitData.SelectedInput];                     // if vol per channel select correct level
     }
@@ -307,7 +313,7 @@ void changeHeadphone()
       digitalWrite(AmpPassiveState, LOW);                                    // set relay low.
     }
     delay(15);                                                               // wait to stabilize
-    digitalWrite(Headphone, HIGH);                                           // switch headphone relay on
+    digitalWrite(HeadphoneOnOff, HIGH);                                           // switch headphone relay on
     delay(15);                                                               // wait to stabilize
     if (InitData.VolPerChannel) {                                            // if we have a dedicated volume level per channel give attenuatorlevel the correct value
       AttenuatorLevel=VolLevels[InitData.SelectedInput];                     // we have a dedicated volumelevel for the headphones
@@ -460,12 +466,17 @@ void changeStandby()
     if (debugEnabled) {
       Serial.print (F(" changeStandby : moving from active to standby,  "));
     }
-    digitalWrite(PowerOn, LOW);                                    // make pin of standby low, relay&screen off and power of amp is turned off
+    setRelayVolume(0);                                             // set volume relays off
+    delay(15);                                                     // wait to stabilize
+    setRelayChannel(0);                                            // disconnect all input channels
+    delay(15);                                                     // wait to stabilze
+    digitalWrite(Connect2Output, LOW);                             // disconnect amp from output 
+    delay(100);                                                    // wait to stabilze
+    digitalWrite(PowerOnOff, LOW);                                 // make pin of standby low, relay&screen off and power of amp is turned off
     digitalWrite(ledStandby, HIGH);                                // turn on standby led to indicate device is in standby
     delay(3000);                                                   // we first wait for stable state
     sendCommandOled(0x08);                                         // turn display OFF, cursor OFF, blink OFF
-    setRelayVolume(0);                                             // set volume relays off
-    setRelayChannel(0);                                            // disconnect all input channels
+
     if (debugEnabled) {
       Serial.println (F(" status is now standby "));
     }
@@ -475,14 +486,13 @@ void changeStandby()
     if (debugEnabled) {
       Serial.print (F(" changeStandby : moving from standby to active,  "));
     }
-    digitalWrite(PowerOn, HIGH);                                   // make pin of standby low, relays&screen on and power of amp is turned on
     digitalWrite(ledStandby, LOW);                                 // turn off standby led to indicate device is in powered on
-    delay(1000);                                                   // we first wait for stable state
+    digitalWrite(PowerOnOff, HIGH);                                // make pin of standby low, relays&screen on and power of amp is turned on
     sendCommandOled(0x01);                                         // Clear Display and set DDRAM location 00h
     sendCommandOled(0x0C);                                         // turn display ON, cursor OFF, blink OFF
-    void WaitForXseconds();                                        // wait for 25 seconds
-    setRelayVolume(0);                                             // set the relays in 0 
-    delay(15);                                                     // delay for 15ms
+    WaitForXseconds();                                             // wait to let amp warm up 
+    digitalWrite(Connect2Output, HIGH);                            // connect amp to output 
+    delay(100);                                                    // wait to stabilize
     setRelayChannel(InitData.SelectedInput);                       // select correct input channel
     delay(15);                                                     // delay for 15 ms
     setRelayVolume(AttenuatorLevel);                               // set the relays in the start volume
