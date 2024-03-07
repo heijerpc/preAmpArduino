@@ -6,6 +6,7 @@
 // v0.6 included eeprom support, 3 to 4 channels, headphone support, passiveAmp support,
 // v0.7 added IR codes, changed channelinput to + and -, added long delay to led preamp stabilize, added menu, changed array and struct in eeprom
 //      changed oledscreen type and procedures to write data to screen
+// v0.8
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for EPROM writing
@@ -27,7 +28,7 @@ int VolLevels [5];                                    // Vollevels is an array s
 #define AmpPassiveState  A2                           // pin connected to the relay handeling passive/active state of amp
 #define StartDelay A3                                 // pin connected to the relay which connects amp to output
 #define ledStandby  11                                // connected to a led that is on if device is in standby
-const char* initTekst = "V 0.7";                      // current version of the code, shown in startscreen, content should be changed in this line
+const char* initTekst = "V 0.8";                      // current version of the code, shown in startscreen, content should be changed in this line
 bool debugEnabled = true;                             // boolean, defines if debug is enabled, value should be changed in this line, either true or false
 bool Alive = true;                                    // boolean, defines if we are in standby mode or acitve
 bool daughterboard = true;                            // boolean, defines if a daughterboard is used to support XLR
@@ -271,12 +272,15 @@ void loop()
 void WaitForXseconds() {
   char valueinchar[3];                                            // string of char used to write output to screen
   sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
+  writeOLEDstring(initTekst,line2+6);                             // write version number
+  delay(1000);
+  sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
   writeOLEDstring("please wait ",line1+3);                        // write please wait
-  writeOLEDstring(initTekst,line4+15);                            // write version number
+
   for (int i=25; i>0;i--) {                                       // run for 25 times, waiting in total 25 seconds
     delay(1000);                                                  // delay for a second
     sprintf(valueinchar, "%02d", i);                              // convert int to char array
-    writeOLEDstring(valueinchar,line3+8);                         // write number off seconds left
+    writeOLEDstring(valueinchar,line2+7);                         // write number off seconds left
   }  
   sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
 }                                                                 
@@ -369,6 +373,12 @@ void setupMenu()
 {
   char valueinchar[6];                                              // used for converting int to string of char
   int Vol;                                                          // used to write volume level to screen 
+  sendCommandOled(0x08);                                            // display off 
+  sendCommandOled(0x3E);                                            //FunctionSet: N=1 BE=0 RE=1 IS=0
+  sendCommandOled(0x09);                                            //5 dot font 
+  sendCommandOled(0x38);                                            //FunctionSet: N=1 DH=0 RE=0 IS=0 , 4 line mode
+  sendCommandOled(0x01);                                            //Clear display
+  sendCommandOled(0x0C);                                            //Display on
 //  set balance value
   if (daughterboard) {                                              // balance only set if we have a daughterboard
     sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
@@ -450,6 +460,12 @@ void setupMenu()
   }
   EEPROM.put(0,InitData);                                      // save new values
   EEPROM.put(10,VolLevels);                                    // save volume levels
+  sendCommandOled(0x08);                                       // display off  
+  sendCommandOled(0x3E);                                       //FunctionSet: N=1 BE=0 RE=1 IS=0
+  sendCommandOled(0x0D);                                       //6 dot font 
+  sendCommandOled(0x3C);                                       //FunctionSet: N=1 DH=0 RE=0 IS=0, 2line mode
+  sendCommandOled(0x01);                                       //Clear display
+  sendCommandOled(0x0C);                                       //Display on
   sendCommandOled(0x01);                                       // Clear Display and set DDRAM location 00h
   setRelayChannel(InitData.SelectedInput);                     // set amp on prefered channel
   if (InitData.VolPerChannel) {                                // choose volume level 
@@ -590,7 +606,7 @@ void changeMute()
     delay(15);                                                                   
     setRelayVolume(AttenuatorLevel);                                      //  set relays to support orgical volume                                                  
     muteEnabled = false;                                                  // change value of boolean
-    writeOledScreenLeft();                                                //display info on oled screen
+    setVolumeOled(AttenuatorLevel);
     if (debugEnabled) {
        Serial.print(F("ChangeMute : Mute now disabled, setting volume to: "));
        Serial.println (AttenuatorLevel);
@@ -601,7 +617,7 @@ void changeMute()
     delay(15);                                                            // set relays to zero volume
     setRelayChannel(0);                                                   // set relays to no input channel
     muteEnabled = true;                                                   // change value of boolean 
-    writeOledScreenLeft();                                                //display info on oled screen
+    setVolumeOled(0);                                                     //display info on oled screen
     if (debugEnabled)     {
       Serial.println (F("Changemute: Mute enabled"));
     }
@@ -621,21 +637,16 @@ void sendDataOled(unsigned char data)
 void writeOledScreenLeft()
 {
   const char* Tekst[5] = {"mute","    ","headphone  ","passive out","           "};
-  if (muteEnabled) {
-    writeOLEDstring(Tekst[0],line2);
-  } else {
-    writeOLEDstring(Tekst[1],line2);
-  }
   if (InitData.HeadphoneActive) { 
-    writeOLEDstring(Tekst[2],line3); 
+    writeOLEDstring(Tekst[2],line1); 
   } 
   else if (InitData.AmpPassive) {
-        writeOLEDstring(Tekst[3],line3);
+        writeOLEDstring(Tekst[3],line1);
   }
   else {
-  writeOLEDstring(Tekst[4],line3); 
+  writeOLEDstring(Tekst[4],line1); 
   }
-  writeOLEDstring(inputTekst[InitData.SelectedInput],line4);  
+  writeOLEDstring(inputTekst[InitData.SelectedInput],line2);  
 }         
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // send command to oled display, generic proc to send command to oled screen
@@ -647,107 +658,34 @@ void sendCommandOled(unsigned char command)       // send a command to the displ
   Wire.endTransmission();
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// function to store bitmaps for large volume figures into CGRAM
-void StoreLargecijfer()                          
-{
-  const uint8_t Bitmaps[8][8] = {                       // array of bitmaps for large figures, copied and adapted from jos van eindhoven
-  {//bitmap 0
-  0x07, 0x0f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f},
-  {//bitmap 1
-  0x1f, 0x1f, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00},
-  {//bitmap 2
-  0x1c, 0x1e, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f},
-  {//bitmap 3
-  0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x0f, 0x07},
-  {//bitmap 4
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x1f, 0x1f},
-  {//bitmap 5}
-  0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1f, 0x1e, 0x1c},
-  {//bitmap 6
-  0x1f, 0x1f, 0x1f, 0x00, 0x00, 0x00, 0x1f, 0x1f},
-  {//bitmap 7
-  0x1f, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x1f, 0x1f}
-};
-  sendCommandOled(0x40);                         // set CGRAM first address
-  for (int i=0; i<8; i++){                       // walk through the array bitmaps, we have 8 bitmaps
-      for (int c=0; c<8; c++){                   // every bitmap consists out of 8 lines
-        sendDataOled(Bitmaps[i][c]);             // sent data to cgram
-      }
-  }
-}
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // intialistion of the oled screen after powerdown of screen.
-void OledSchermInit() 
-                        
+void OledSchermInit()                      
 {
   delay(200);
-    sendCommandOled(0x3A);             //FunctionSet: N=1 BE=0 RE=1 IS=0
-    sendCommandOled(0x09);             //4‐line mode
-    sendCommandOled(0x05);             //View 0°
-    sendCommandOled(0x38);             //FunctionSet: N=1 DH=0 RE=0 IS=0
-    sendCommandOled(0x08);             // display off   
-    sendCommandOled(0x3A);             //FunctionSet: N=1 BE=0 RE=1 IS=0
-    sendCommandOled(0x72);             //ROM Selection (RE muss 1 sein)
-    sendDataOled(0x00);                //ROM_A = 0x00, ROM_B = 0x04, ROM_C = 0x0C
-    sendCommandOled(0x38);             //FunctionSet: N=1 DH=0 RE=0 IS=0
-    delay(10);
-    StoreLargecijfer();
-    sendCommandOled(0x01);             //Clear display    
-    sendCommandOled(0x0C);             //turn display ON, cursor OFF, blink OFF
-    sendCommandOled(0x01);             //Clear display
+  sendCommandOled(0x3E);             //FunctionSet: N=1 BE=0 RE=1 IS=0
+  sendCommandOled(0x0D);             //4‐line mode
+  sendCommandOled(0x18);             //4‐line mode
+  sendCommandOled(0x3C);             //FunctionSet: N=1 DH=0 RE=0 IS=0
+  sendCommandOled(0x01);             // Clear display                
+  sendCommandOled(0x0C);             // Display on
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
  // write volume level to screen
-void setVolumeOled(int volume)                  
+void setVolumeOled(int volume)                 
 {
-  const uint8_t Cijfers [10][6] = {                     // definitions of 0 till 9 used on the oled screen, stored in ram
-  //0:
-  {0,1,2,3,4,5},
-  //1:
-  {1,31,32,4,31,4},
-  //2
-  {6,6,2,3,7,7},
-  //3
-  {6,6,2,7,7,5},
-  //4
-  {3,4,2,32,32,31},
-  //5
-  {31,6,6,7,7,5},
-  //6
-  {0,6,6,3,7,5},
-  //7
-  {1,1,2,32,0,32},
-  //8
-  {0,6,2,3,7,5},
-  //9
-  {0,6,2,32,32,31},
-  };
-  volume=volume-63;
-  if (!InitData.AmpPassive) {                    // if the amp is not in passive mode adjust volume displayed on screen
-   volume = volume + Voloffset;                  // change volumelevel from 0 - 64 to (0 - offset)- to (64 - offset)
-  }
-  sendCommandOled(line2+13);                     // place cursor second row char 13
-  if (volume < 0) {                              // if volumlevel  is negative
-    sendDataOled(1);                             // minus sign
-  }
-  else {
-    sendDataOled(32);                            // no minus sign
-  }
-  unsigned int lastdigit=abs(volume%10);
-  unsigned int firstdigit=abs(volume/10);         // below needs to be rewritten to be more efficient
-  sendCommandOled(line1+14);
-  for (int c=0; c<3; c++){                        // write top of first figure
-    sendDataOled(Cijfers[firstdigit][c]);  
-  }
-  for (int c=0; c<3; c++){                        // write top of second figure
-    sendDataOled(Cijfers[lastdigit][c]);  
-  }
-  sendCommandOled(line2+14);
-  for (int c=3; c<6; c++){                        // write bottem of first figure
-    sendDataOled(Cijfers[firstdigit][c]);  
-  }
-  for (int c=3; c<6; c++){                        // every botomm of last firege
-  sendDataOled(Cijfers[lastdigit][c]);  
+  char valueinchar[4];                                              // used for converting int to string of char
+  const char* Tekst[5] = {"mute","    ","headphone  ","passive out","           "};
+  if (muteEnabled) {
+    writeOLEDstring(Tekst[0],line1+12);
+  } else
+  {
+    writeOLEDstring(Tekst[1],line1+11);            // clear part of the screen
+    volume=volume-63;
+    if (!InitData.AmpPassive) {                    // if the amp is not in passive mode adjust volume displayed on screen
+     volume = volume + Voloffset;                  // change volumelevel from 0 - 64 to (0 - offset)- to (64 - offset)
+    }
+    sprintf(valueinchar, "%d", volume);                           // create an array of chars showing volume level
+    writeOLEDstring(valueinchar,line1+13); 
   }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
