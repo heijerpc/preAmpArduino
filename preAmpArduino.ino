@@ -6,7 +6,7 @@
 // v0.6 included eeprom support, 3 to 4 channels, headphone support, passiveAmp support,
 // v0.7 added IR codes, changed channelinput to + and -, added long delay to led preamp stabilize, added menu, changed array and struct in eeprom
 //      changed oledscreen type and procedures to write data to screen
-// v0.8
+// v0.81 added portselection to second board, if volume >63 <0 dont do anything.
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for EPROM writing
@@ -28,7 +28,8 @@ int VolLevels [5];                                    // Vollevels is an array s
 #define AmpPassiveState  A2                           // pin connected to the relay handeling passive/active state of amp
 #define StartDelay A3                                 // pin connected to the relay which connects amp to output
 #define ledStandby  11                                // connected to a led that is on if device is in standby
-const char* initTekst = "V 0.8";                      // current version of the code, shown in startscreen, content should be changed in this line
+#define oledReset 12                                  // connected to the reset port of Oled screen
+const char* initTekst = "V 0.81";                     // current version of the code, shown in startscreen, content should be changed in this line
 bool debugEnabled = true;                             // boolean, defines if debug is enabled, value should be changed in this line, either true or false
 bool Alive = true;                                    // boolean, defines if we are in standby mode or acitve
 bool daughterboard = true;                            // boolean, defines if a daughterboard is used to support XLR
@@ -247,7 +248,6 @@ void loop()
         }
         break;
       case apple_right:
-      case eindhoven_right: 
         if (Alive) {                                         // we only react if we are in alive state, not in standby
            changeInput(1);                                   // change input channel 
            delay(200);
@@ -274,6 +274,9 @@ void WaitForXseconds() {
   sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
   writeOLEDstring(initTekst,line2+6);                             // write version number
   delay(1000);
+  if (debugEnabled) {
+    Serial.println (F(" waiting for preamp to stabilize "));
+  }
   sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
   writeOLEDstring("please wait ",line1+3);                        // write please wait
 
@@ -283,6 +286,9 @@ void WaitForXseconds() {
     writeOLEDstring(valueinchar,line2+7);                         // write number off seconds left
   }  
   sendCommandOled(0x01);                                          // Clear Display and set DDRAM location 00h
+  if (debugEnabled) {
+    Serial.println (F(" preamp wait time expired "));
+  }
 }                                                                 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // procedure to handle change of headphones status                  
@@ -572,29 +578,32 @@ void changeInput(int change)
 // Functions to change volume 
 void changeVolume(int increment) 
 {
-  if (!muteEnabled)
-  {
-    if (debugEnabled) {
-      Serial.print (F("ChangeVolume: volume was : "));   
-      Serial.println (AttenuatorLevel); 
-    }
-    AttenuatorLevel = AttenuatorLevel + increment;                            // define new attenuator level
-    if (AttenuatorLevel > 63) {                                               // volume cant be higher as 63
-      AttenuatorLevel=63; 
-    }
-    if (AttenuatorLevel < 0 ) {                                               // volume cant be lower as 0
-      AttenuatorLevel=0;
-    } 
-    setRelayVolume(0);                                                        // set volume first to zero, looks like eindhoven is doing this
-    delay(15);                                                                // wait 15mS, needed according to eindhoven
-    if (!muteEnabled){ 
-      setRelayVolume(AttenuatorLevel);                                        // set relays according new volume level
-    }
-    setVolumeOled(AttenuatorLevel);                                           // update screen 
-    if (debugEnabled) {
-      Serial.print (F("ChangeVolume: volume is now : "));
-      Serial.println (AttenuatorLevel);
-    }
+  bool write = true;
+  if (muteEnabled)  {                                                       // if mute enabled
+    muteEnabled = false;                                                    // disable mute 
+  }
+  if (debugEnabled) {
+    Serial.print (F("ChangeVolume: volume was : "));   
+    Serial.println (AttenuatorLevel); 
+  }
+  AttenuatorLevel = AttenuatorLevel + increment;                            // define new attenuator level
+  if (AttenuatorLevel > 63) {                                               // volume cant be higher as 63
+    write = false;
+    AttenuatorLevel=63; 
+  }
+  if (AttenuatorLevel < 0 ) {                                               // volume cant be lower as 0
+    AttenuatorLevel=0;
+    write = false;
+  } 
+  if (write){                                                               // als volume veranderd is
+    setRelayVolume(0);                                                      // set volume first to zero, looks like eindhoven is doing this
+    delay(15);  
+    setRelayVolume(AttenuatorLevel);                                        // set relays according new volume level
+    setVolumeOled(AttenuatorLevel);                                         // update screen 
+  }
+  if (debugEnabled) {
+    Serial.print (F("ChangeVolume: volume is now : "));
+    Serial.println (AttenuatorLevel);
   }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -761,6 +770,12 @@ void setRelayChannel(uint8_t relay)
   Wire.write(0x12);
   Wire.write(inverseWord);
   Wire.endTransmission();
+  if (daughterboard) {
+    Wire.beginTransmission(MCP23017_I2C_ADDRESS_top);          // write volume right to right ladder
+    Wire.write(0x12);
+    Wire.write(inverseWord);
+    Wire.endTransmission(); 
+  }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //initialize the MCP23017 controling the relays; set I/O pins to outputs; first do bank B, next A otherwise init fails. Default = icon=0
