@@ -25,25 +25,33 @@
 // v0.95 added option to change channel name
 //       optimized menu
 //       changed balance
+// v0.96 bug fixes
+//       made alive boolean persistant, so preamp starts up in previous mode (active/standby)
+//       made startup screen more customabel 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
-//#define DEBUG                            // Comment this line when DEBUG mode is not needed
-const bool daughterboard = true;           // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
-const uint8_t InputPortType = 0b00000011;  // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
-#define delay_plop 20                      // delay timer between volume changes preventing plop, 20 mS for drv777
+//#define DEBUG                                     // Comment this line when DEBUG mode is not needed
+const bool DaughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
+const uint8_t InputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
+#define DelayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
+const char* Toptekst = "PeWalt, V 0.96";            // current version of the code, shown in startscreen top, content could be changed
+const char* MiddleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
+const char* BottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for EPROM writing
 #include <EEPROM.h>
 struct SavedData {         // definition of the data stored in eeprom
-  char UniqueString[9];    // unique indentifier to see if eeprom is programmed
-  bool VolPerChannel;      // boolean, if True volume level per channel is defined, otherwise volume stays as is
-  uint8_t SelectedInput;   // last selected input
+  char UniqueString[9];    // unique indentifier to see if eeprom is programmed and correct version
+  bool VolPerChannel;      // boolean, if True volume level per channel is defined, otherwise one generic volume is used
+  uint8_t SelectedInput;   // last selected input channel
   int BalanceOffset;       // balance offset of volume, difference between left and right
   int ContrastLevel;       // contraslevel of the screen
   int PreAmpGain;          // vol on screen is between -63 and 0, PreAmpGain is added to value displayed on the screen
   int StartDelayTime;      // delay after power on amp to stabilize amp output
   bool HeadphoneActive;    // boolean, headphones active, no output to amp
   bool DirectOut;          // boolean, preamp is used passive or active mode
+  bool PrevStatusDirectOut;// boolean, status of previous status of direct out, used when using headphones
+  bool Alive;              // boolean, defines if amp is active of standby modes
   char InputTekst[5][15];  // description of input channels
 };
 SavedData InitData;  // initdata is a structure defined by SavedData containing the values
@@ -52,7 +60,7 @@ int VolLevels[5];    // Vollevels is an array storing initial volume level when 
 // pin definitions
 #define PowerOnOff A0         // pin connected to the relay handeling power on/off of the amp
 #define HeadphoneOnOff A1     // pin connected to the relay handeling headphones active / not active
-#define DirectOutState A2     // pin connected to the relay handeling direct out  state of amp
+#define DirectOutState A2     // pin connected to the relay handeling direct out state of amp
 #define StartDelay A3         // pin connected to the relay which connects amp to output
 volatile int rotaryPinA = 3;  // encoder pin A, volatile as its addressed within the interupt of the rotary
 volatile int rotaryPinB = 4;  // encoder pin B,
@@ -60,7 +68,7 @@ volatile int rotaryPinB = 4;  // encoder pin B,
 #define ButtonChannel 6       // pin is conncected to the button to change input channel round robin, pullup
 #define ButtonStandby 7       // pin is connected to the button to change standby on/off, pullup
 #define buttonHeadphone 8     // pin  is connected to the button to change headphone on/off, pullup
-#define ButtonDirectOut 9     // pin  is connected to the button to change preamp passive on/off, pullup
+#define ButtonDirectOut 9     // pin  is connected to the button to switch between direct out or amp, pullup
 #define ButtonMute 10         // pin  is connected to the button to change mute on/off, pullup
 #define LedStandby 11         // connected to a led that is on if amp is in standby mode
 #define OledReset 12          // connected to the reset port of Oled screen, used to reset Oled screen
@@ -91,7 +99,7 @@ bool sLongPressJustDetected;          // used within IR procedures to determine 
 #define fontH21cijfer u8g2_font_timB24_tn            // 17w x 31h, char 23h
 char VolInChar[4];                                   // used on many places to convert int to char
 #include <U8g2lib.h>                                 // include graphical based character mode library
-U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(U8G2_R2);  // define the screen type used.
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C Screen(U8G2_R2);  // define the screen type used.
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for the attenuator board
 #define MCP23017_I2C_ADDRESS_bottom 0x25  // I2C address of the relay board bottom
@@ -103,35 +111,32 @@ int AttenuatorRightTmp;                   // intermediate volume sent to relay
 int AttenuatorLeftTmp;                    // intermeditate volume sent to relay
 volatile int AttenuatorChange = 0;        // change of volume out of interupt function
 bool muteEnabled = false;                 // boolean, status of Mute
-bool OldStatusDirectOut = false;          // boolean, status of previous status of direct out, used when using headphones
 bool VolumeChanged = false;               // defines if volume is changed
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // general definitions
-#include <Wire.h>                  // include functions for i2c
-#include <ezButton.h>              // include functions for debounce
-const char* initTekst = "V 0.95";  // current version of the code, shown in startscreen, content should be changed in this line
-bool Alive = true;                 // boolean, defines if we are in standby mode or acitve
-ezButton button(RotaryButton);     // create ezButton object that attach to the rotary button;
+#include <Wire.h>                          // include functions for i2c
+#include <ezButton.h>                      // include functions for debounce
+
+ezButton button(RotaryButton);             // create ezButton object  attached to the rotary button;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// definitions for the compiler as we have nested functions
-void defineVolume(int increment);                         // change volume
-void rotaryTurn();                                        // interupt handler if rotary is turned
+// definitions for the compiler
+void DefineVolume(int increment);                         // define volume levels
+void RotaryTurn();                                        // interupt handler if rotary is turned
 void WriteVolumeScreen(int volume);                       // write volume level to screen
 void WriteFixedValuesScreen();                            // write info on left side screen (mute, passive, input)
 void OledSchermInit();                                    // init procedure for Oledscherm
 void MCP23017init(uint8_t MCP23017_I2C_ADDRESS);          // init procedure for relay extender
-void setRelayChannel(uint8_t Word);                       // set relays to selected input channel
-void setRelayVolume(int RelayLeft, int RelayRight);       // set relays to selected volume level
-void changeStandby();                                     // changes status of preamp between active and standby
-void changeHeadphone();                                   // change status of headphones between active and standby
-void changePassive();                                     // change status of preamp between active and passive
-void changeMute();                                        // enable and disable mute
-void changeInput(int change);                             // change the input channel
-void setupMenu();                                         // run the setup menu.
-void waitForXseconds();                                   // wait for number of seconds, used to warm up amp
-bool detectLongPress(uint16_t aLongPressDurationMillis);  // detect if multiple times key on remote controle is pushed
-void checkIfEepromHasInit();                              // check if EEPROM is configured correctly
-void writeEEprom();                                       // write initial values to the eeprom
+void SetRelayChannel(uint8_t Word);                       // set relays to selected input channel
+void SetRelayVolume(int RelayLeft, int RelayRight);       // set relays to selected volume level
+void ChangeStandby();                                     // changes status of preamp between active and standby
+void ChangeHeadphone();                                   // change status of headphones between active and standby
+void ChangeDirectOut();                                   // change status of preamp between direct out and amplified
+void ChangeMute();                                        // enable and disable mute
+void ChangeInput(int change);                             // change the input channel
+void WaitForXseconds();                                   // wait for number of seconds, used to warm up amp
+bool DetectLongPress(uint16_t aLongPressDurationMillis);  // detect if multiple times key on remote controle is pushed
+void CheckIfEepromHasInit();                              // check if EEPROM is configured correctly
+void WriteEEprom();                                       // write initial values to the eeprom
 void MainSetupMenu();                                     // the main setup menu
 void SetupMenuBalance();                                  // submenu, setting the balance
 void SetupMenuInitVol();                                  // submenu, setting initial values of volume
@@ -147,10 +152,10 @@ void ScanI2CBus();                                        // used in debug mode 
 void setup() {
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // pin modes
-  pinMode(PowerOnOff, OUTPUT);             //control the relay that provides power to the rest of the amp
-  pinMode(HeadphoneOnOff, OUTPUT);         //control the relay that switches headphones on and off
-  pinMode(DirectOutState, OUTPUT);         //control the relay that switches the preamp between direct out or active
-  pinMode(StartDelay, OUTPUT);             //control the relay that connects amp to output ports
+  pinMode(PowerOnOff, OUTPUT);             // control the relay that provides power to the rest of the amp
+  pinMode(HeadphoneOnOff, OUTPUT);         // control the relay that switches headphones on and off
+  pinMode(DirectOutState, OUTPUT);         // control the relay that switches the preamp between direct out or active
+  pinMode(StartDelay, OUTPUT);             // control the relay that connects amp to output ports
   pinMode(rotaryPinA, INPUT_PULLUP);       // pin A rotary is high and its an input port
   pinMode(rotaryPinB, INPUT_PULLUP);       // pin B rotary is high and its an input port
   pinMode(ButtonChannel, INPUT_PULLUP);    // button to change channel
@@ -158,8 +163,8 @@ void setup() {
   pinMode(buttonHeadphone, INPUT_PULLUP);  // button to switch between AMP and headphone
   pinMode(ButtonDirectOut, INPUT_PULLUP);  // button to switch between passive and active mode
   pinMode(ButtonMute, INPUT_PULLUP);       // button to mute
-  pinMode(LedStandby, OUTPUT);             //led will be on when device is in standby mode
-  pinMode(OledReset, OUTPUT);              // pinmode output to set reset of oled screen
+  pinMode(LedStandby, OUTPUT);             // led will be on when device is in standby mode
+  pinMode(OledReset, OUTPUT);              // set reset of oled screen
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // write init state to output pins
   digitalWrite(PowerOnOff, LOW);      // keep amp turned off
@@ -168,27 +173,23 @@ void setup() {
   digitalWrite(StartDelay, LOW);      // disconnect amp from output
   digitalWrite(LedStandby, LOW);      // turn off standby led to indicate device is becoming active
   digitalWrite(OledReset, LOW);       // keep the Oled screen in reset mode
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // first power up pre-amp
-  digitalWrite(PowerOnOff, HIGH);  // turn power relay amp on
-  delay(2000);                     // wait till all powered up
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // enable debug to write to console if debug is enabled
-#ifdef DEBUG
+ #ifdef DEBUG
   Serial.begin(9600);  // if debuglevel on start monitor screen
-#endif
+ #endif
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // // read setup values stored within the eeprom
-  checkIfEepromHasInit();      // check if eeprom has config file, otherwise write config
+  CheckIfEepromHasInit();      // check if eeprom has config file, otherwise write config
   EEPROM.get(0, InitData);     // get variables within init out of EEPROM
-  EEPROM.get(110, VolLevels);  // get the aray setting volume levels
-#ifdef DEBUG                   // if debug enabled write message
+  EEPROM.get(110, VolLevels);  // get the array setting volume levels
+ #ifdef DEBUG                   // if debug enabled write message
   Serial.println(F("initprog: the following values read from EEPROM"));
   ListContentEEPROM();
-#endif
+ #endif
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Set up pins for rotary:
-  attachInterrupt(digitalPinToInterrupt(rotaryPinA), rotaryTurn, RISING);  // if pin encoderA changes run rotaryTurn
+  attachInterrupt(digitalPinToInterrupt(rotaryPinA), RotaryTurn, RISING);  // if pin encoderA changes run RotaryTurn
   button.setDebounceTime(50);                                              // set debounce time to 50 milliseconds
   ////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // startup IR
@@ -197,76 +198,56 @@ void setup() {
   // initialize the oled screen and relay extender
   Wire.begin();  // start i2c communication
   delay(100);
-#ifdef DEBUG
-  ScanI2CBus();
-#endif
+ #ifdef DEBUG
+  ScanI2CBus();  // in debug mode show i2c addresses used
+ #endif
   OledSchermInit();  // intialize the Oled screen
   delay(100);
   MCP23017init(MCP23017_I2C_ADDRESS_bottom);  // initialize the relays
-  if (daughterboard) {                        // if we have a daughterboard
+  if (DaughterBoard) {                        // if we have a daughterboard
     MCP23017init(MCP23017_I2C_ADDRESS_top);   // initialize daugterboard
   }
-  setRelayVolume(0, 0);  // set volume relays to 0, just to be sure
-  delay(delay_plop);     // wait to stabilize
-  setRelayChannel(0);    // disconnect all input channels
+  SetRelayVolume(0, 0);  // set volume relays to 0, just to be sure
+  delay(DelayPlop);     // wait to stabilize
+  SetRelayChannel(0);   // disconnect all input channels
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // wait till amp is stable
-  waitForXseconds();               // wait to let amp warm up
-  digitalWrite(StartDelay, HIGH);  // connect amp to output
-  delay(100);                      // wait to stabilize
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // set input / volume / etc
-  if (InitData.DirectOut) {              // if DirectOut is active set port high to active relay
-    digitalWrite(DirectOutState, HIGH);  // turn the preamp in directout mode
-  }
-  setRelayChannel(InitData.SelectedInput);  // select stored input channel
-  delay(delay_plop);
-  if (InitData.HeadphoneActive) {        // headphone is active
-    digitalWrite(HeadphoneOnOff, HIGH);  // switch headphone relay on
-  }
-  if (InitData.VolPerChannel) {                          // if we have a dedicated volume level per channel give attenuatorlevel the correct value
-    AttenuatorMain = VolLevels[InitData.SelectedInput];  // if vol per channel select correct level
-  } else {                                               // if we dont have the a dedicated volume level per channel
-    AttenuatorMain = VolLevels[0];                       // give attenuator level the generic value
-  }
-  defineVolume(0);                                  // calculate correct volume levels
-  setRelayVolume(AttenuatorLeft, AttenuatorRight);  // set relays to the correct level
-  WriteFixedValuesScreen();                         //display info on oled screen
-  WriteVolumeScreen(AttenuatorMain);                //display volume level on oled screen
-#ifdef DEBUG
+  // set input / volume / etc depending standby active state
+  InitData.Alive=!InitData.Alive; //invert bool so we can use standard standby proc
+  ChangeStandby();
+ #ifdef DEBUG
   Serial.println(F("Setup: end of setup proc"));
-#endif
+ #endif
 }
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Main loop
 //////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
-  if (Alive) {                                                  // we only react if we are in alive state, not in standby
+  if (InitData.Alive) {                                         // we only react if we are in alive state, not in standby
     if (AttenuatorChange != 0) {                                // if AttenuatorChange is changed by the interupt we change volume/etc
-      defineVolume(AttenuatorChange);                           // Calculate correct temp and end volumelevels
+      DefineVolume(AttenuatorChange);                           // Calculate correct temp and end volumelevels
       if (VolumeChanged) {                                      // if volume is changed
-        setRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  // set relays to the temp level
-        delay(delay_plop);                                      // wait to prevent plop
-        setRelayVolume(AttenuatorLeft, AttenuatorRight);        // set relay to the correct level
+        SetRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  // set relays to the temp level
+        delay(DelayPlop);                                       // wait to prevent plop
+        SetRelayVolume(AttenuatorLeft, AttenuatorRight);        // set relay to the correct level
         WriteVolumeScreen(AttenuatorMain);                      // display volume level on oled screen
       }
       AttenuatorChange = 0;  // reset the value to 0
     }
     if (digitalRead(ButtonMute) == LOW) {  // if button mute is pushed
       delay(500);                          // wait to prevent multiple switches
-      changeMute();                        // change status of mute
+      ChangeMute();                        // change status of mute
     }
     if (digitalRead(ButtonChannel) == LOW) {  // if button channel switch is pushed
       delay(500);                             // wait to prevent multiple switches
-      changeInput(1);                         // change input channel
+      ChangeInput(1);                         // change input channel
     }
     if (digitalRead(buttonHeadphone) == LOW) {  // if button headphones switch is pushed
       delay(500);                               // wait to prevent multiple switches
-      changeHeadphone();                        // change to headphone or back
+      ChangeHeadphone();                        // change to headphone or back
     }
     if (digitalRead(ButtonDirectOut) == LOW) {  // if button passive switch is pushed
       delay(500);                               // wait to prevent multiple switches
-      changePassive();                          // change active/passive state
+      ChangeDirectOut();                        // change active/passive state
     }
     button.loop();
     if (button.isPressed()) {  // if rotary button is pushed go to setup menu
@@ -276,63 +257,63 @@ void loop() {
   }
   if (digitalRead(ButtonStandby) == LOW) {  // if button standby is is pushed
     delay(500);                             // wait to prevent multiple switches
-    changeStandby();                        // changes status
+    ChangeStandby();                        // changes status
   }
   if (IrReceiver.decode()) {      // if we receive data on the IR interface
-    if (detectLongPress(1500)) {  // simple function to increase speed of volume change by reducing wait time
+    if (DetectLongPress(1500)) {  // simple function to increase speed of volume change by reducing wait time
       DelayTimer = 0;
     } else {
       DelayTimer = 300;
     }
     switch (IrReceiver.decodedIRData.command) {  // read the command field containing the code sent by the remote
       case AppleUp:
-        if (Alive) {        // we only react if we are in alive state, not in standby
-          defineVolume(1);  // calculate correct volume levels, plus 1
+        if (InitData.Alive) {        // we only react if we are in alive state, not in standby
+          DefineVolume(1);           // calculate correct volume levels, plus 1
           if (VolumeChanged) {
-            setRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
-            delay(delay_plop);                                      // wait to prevent plop
-            setRelayVolume(AttenuatorLeft, AttenuatorRight);        // set relay to the correct level
-            WriteVolumeScreen(AttenuatorMain);                      // display volume level on oled screen
+            SetRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
+            delay(DelayPlop);                                       // wait to prevent plop
+            SetRelayVolume(AttenuatorLeft, AttenuatorRight);        // set relay to the correct level
+            WriteVolumeScreen(AttenuatorMain);                      // display volume level on screen
           }
           delay(DelayTimer);
         }
         break;
       case AppleDown:
-        if (Alive) {         // we only react if we are in alive state, not in standby
-          defineVolume(-1);  // calculate correct volume levels, minus 1
+        if (InitData.Alive) {             // we only react if we are in alive state, not in standby
+          DefineVolume(-1);               // calculate correct volume levels, minus 1
           if (VolumeChanged) {
-            setRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
-            delay(delay_plop);                                      // wait to prevent plop
-            setRelayVolume(AttenuatorLeft, AttenuatorRight);        // set relay to the correct level
+            SetRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
+            delay(DelayPlop);                                       // wait to prevent plop
+            SetRelayVolume(AttenuatorLeft, AttenuatorRight);        // set relay to the correct level
             WriteVolumeScreen(AttenuatorMain);                      // display volume level on oled screen
           }
           delay(DelayTimer);
         }
         break;
       case AppleLeft:
-        if (Alive) {        // we only react if we are in alive state, not in standby
-          changeInput(-1);  // change input channel
+        if (InitData.Alive) {        // we only react if we are in alive state, not in standby
+          ChangeInput(-1);           // change input channel
           delay(300);
         }
         break;
       case AppleRight:
-        if (Alive) {       // we only react if we are in alive state, not in standby
-          changeInput(1);  // change input channel
+        if (InitData.Alive) {       // we only react if we are in alive state, not in standby
+          ChangeInput(1);           // change input channel
           delay(300);
         }
         break;
       case AppleForward:
-        changeStandby();  // switch status of standby
+        ChangeStandby();            // switch status of standby
         break;
       case AppleMiddle:
-        if (Alive) {     // we only react if we are in alive state, not in standby
-          changeMute();  // change mute
+        if (InitData.Alive) {       // we only react if we are in alive state, not in standby
+          ChangeMute();             // change mute
           delay(300);
         }
         break;
       case AppleMenu:
-        if (Alive) {        // we only react if we are in alive state, not in standby
-          changePassive();  // change mute
+        if (InitData.Alive) {        // we only react if we are in alive state, not in standby
+          ChangeDirectOut();         // switch between direct out and via preamp
           delay(300);
         }
         break;
@@ -342,132 +323,131 @@ void loop() {
 }
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // delay the startup to wait for pre amp to stabilize, clears screen at start and end of proc
-void waitForXseconds() {
-  char valueinchar[3];
-  u8g2.clearBuffer();      // clear the internal memory and screen
-  u8g2.setFont(fontH14);   // choose a suitable font
-  u8g2.setCursor(44, 36);  // set cursur in correct position
-  u8g2.print(initTekst);   // write tekst to buffer
-  u8g2.sendBuffer();       // transfer internal memory to the display
-  delay(1000);             // wait for a second
-#ifdef DEBUG               // if debug enabled write message
-  Serial.println(F("waitForXseconds: waiting for preamp to stabilize "));
-#endif
-  u8g2.clearBuffer();                                  // clear the internal memory and screen
-  u8g2.drawStr(24, 16, "please wait");                 // write please wait
-  for (int i = InitData.StartDelayTime; i > 0; i--) {  // run for startdelaytime times
-    u8g2.setDrawColor(0);                              // clean channel name  part in buffer
-    u8g2.drawBox(56, 26, 40, 14);
-    u8g2.setDrawColor(1);
-    u8g2.setCursor(56, 40);           // set cursur in correct position
-    sprintf(valueinchar, "%02d", i);  // convert int to char array
-    u8g2.print(valueinchar);          // print char array
-    u8g2.sendBuffer();                // transfer internal memory to the display
-    delay(1000);                      // delay for a second
+void WaitForXseconds() {
+ #ifdef DEBUG               // if debug enabled write message
+  Serial.println(F("WaitForXseconds: waiting for preamp to stabilize "));
+ #endif
+  Screen.clearBuffer();                       // clear the internal memory and screen
+  Screen.setFont(fontH08);                    // choose a suitable font
+  Screen.setCursor(0, 8);                     // set cursur in correct position
+  Screen.print(Toptekst);                     // write tekst to buffer
+  Screen.setCursor(13, 63);                   // set cursur in correct position
+  Screen.print(BottemTekst);                  // write tekst to buffer
+  Screen.setFont(fontH10);                    // choose a suitable font
+  Screen.setCursor(5, 28);                    // set cursur in correct position
+  Screen.print(MiddleTekst);                  // write please wait
+  for (int i = InitData.StartDelayTime; i > 0; i--) {    // run for startdelaytime times
+    Screen.setDrawColor(0);                              // clean channel name  part in buffer
+    Screen.drawBox(65, 31, 30, 14);
+    Screen.setDrawColor(1);
+    Screen.setCursor(65, 45);               // set cursur in correct position
+    Screen.print(i);                          // print char array
+    Screen.sendBuffer();                      // transfer internal memory to the display
+    delay(1000);                              // delay for a second
   }
-  u8g2.clearDisplay();  // clear screen
-#ifdef DEBUG            // if debug enabled write message
-  Serial.println(F("waitForXseconds: preamp wait time expired "));
-#endif
+  Screen.clearDisplay();                      // clear screen
+ #ifdef DEBUG                                 // if debug enabled write message
+  Serial.println(F("WaitForXseconds: preamp wait time expired "));
+ #endif
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // procedure to handle change of headphones status
-void changeHeadphone() {
-  if (InitData.HeadphoneActive) {  // headphone is active so we have to change to inactive
-#ifdef DEBUG                       // if debug enabled write message
-    Serial.print(F(" changeHeadphone : moving from active to inactive,  "));
-#endif
+void ChangeHeadphone() {
+  if (InitData.HeadphoneActive) {   // headphone is active so we have to change to inactive
+ #ifdef DEBUG                       // if debug enabled write message
+    Serial.print(F(" ChangeHeadphone : moving from active to inactive,  "));
+ #endif
     InitData.HeadphoneActive = false;                 // status off headphone active changed to false
-    EEPROM.put(0, InitData);                          // write new status to EEPROM
-    setRelayVolume(0, 0);                             // switch volume off
-    delay(delay_plop);                                // wait to stabilize
+    SetRelayVolume(0, 0);                             // switch volume off
+    delay(DelayPlop);                                 // wait to stabilize
     digitalWrite(HeadphoneOnOff, LOW);                // switch headphones off
-    if (OldStatusDirectOut==true) {                   // if direct out was active before we turned on headphones
+    if (InitData.PrevStatusDirectOut==true) {         // if direct out was active before we turned on headphones
       InitData.DirectOut = true;                      // make directout true
       digitalWrite(DirectOutState, HIGH);             // set relay high, amp is not active
     }
     delay(100);                                       // wait to stabilize
-    defineVolume(0);                                  // define new volume levels
-    setRelayVolume(AttenuatorLeft, AttenuatorRight);  // set volume correct level
+    DefineVolume(0);                                  // define new volume levels
+    SetRelayVolume(AttenuatorLeft, AttenuatorRight);  // set volume correct level
     WriteFixedValuesScreen();                         //display info on oled screen
     WriteVolumeScreen(AttenuatorMain);                //display volume on oled screen
-#ifdef DEBUG
+    EEPROM.put(0, InitData);                          // write new status to EEPROM
+ #ifdef DEBUG
     Serial.println(" status is now inactive ");
-#endif
-  } else {    // headphone is not active so we have to make it active
-#ifdef DEBUG  // if debug enabled write message
-    Serial.print(F(" changeHeadphone : moving from inactive to active,  "));
-#endif
+ #endif
+  } else {                                            // headphone is not active so we have to make it active
+ #ifdef DEBUG                                         // if debug enabled write message
+    Serial.print(F(" ChangeHeadphone : moving from inactive to active,  "));
+ #endif
     InitData.HeadphoneActive = true;      // status headphone is true
-    EEPROM.put(0, InitData);              // write new status to EEPROM
-    setRelayVolume(0, 0);                 // switch volume off
-    delay(delay_plop);                    // wait to stabilize
+    SetRelayVolume(0, 0);                 // switch volume off
+    delay(DelayPlop);                     // wait to stabilize
     if (InitData.DirectOut) {             // amp must be active if we use headphone
       InitData.DirectOut = false;         // make directout false
       digitalWrite(DirectOutState, LOW);  // set relay low, amp is active
       delay(100);                         // wait to stabilize
-      OldStatusDirectOut=true;
+      InitData.PrevStatusDirectOut=true;
     } else {
-      OldStatusDirectOut=false;
+      InitData.PrevStatusDirectOut=false;
     }
     digitalWrite(HeadphoneOnOff, HIGH);  // switch headphone relay on
     delay(100);                          // wait to stabilize
-    defineVolume(0);                     // define new volume level
+    DefineVolume(0);                     // define new volume level
     if (!muteEnabled) {                  // if mute not enabled write volume to relay
-      setRelayVolume(AttenuatorLeft, AttenuatorRight);
+      SetRelayVolume(AttenuatorLeft, AttenuatorRight);
     }
     WriteFixedValuesScreen();           //display info on oled screen
     WriteVolumeScreen(AttenuatorMain);  //display volume level on screen
-#ifdef DEBUG                            // if debug enabled write message
+    EEPROM.put(0, InitData);            // write new status to EEPROM
+ #ifdef DEBUG                            // if debug enabled write message
     Serial.println(F(" status is now active "));
-#endif
+ #endif
   }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// procedure to switch between active and passive state of preamp
-void changePassive() {
+// procedure to switch between direct out and pre amp amplifier
+void ChangeDirectOut() {
   if (!InitData.HeadphoneActive) {  // only allow switch if headphones is not active
-    if (InitData.DirectOut) {       // Amp is in passive state so we have to change to active
-#ifdef DEBUG                        // if debug enabled write message
-      Serial.print(F(" changePassive : moving from passive to active,  "));
-#endif
+    if (InitData.DirectOut) {       // Amp is in direct out state so we have to change to amp active
+ #ifdef DEBUG                        // if debug enabled write message
+      Serial.print(F(" ChangePassive : moving from direct out to preamp,  "));
+ #endif
       InitData.DirectOut = false;         // make the boolean the correct value
       EEPROM.put(0, InitData);            // write new status to EEPROM
-      setRelayVolume(0, 0);               // switch volume off
-      delay(delay_plop);                  // wait to stabilize
+      SetRelayVolume(0, 0);               // switch volume off
+      delay(DelayPlop);                   // wait to stabilize
       digitalWrite(DirectOutState, LOW);  // switch directout relay off
       delay(100);                         // wait to stabilize
-      defineVolume(0);                    // define new volume level
+      DefineVolume(0);                    // define new volume level
       if (!muteEnabled) {                 // if mute not enabled write volume to relay
-        setRelayVolume(AttenuatorLeft, AttenuatorRight);
+        SetRelayVolume(AttenuatorLeft, AttenuatorRight);
       }
       WriteFixedValuesScreen();           //display info on oled screen
       WriteVolumeScreen(AttenuatorMain);  //display volume level on screen
-#ifdef DEBUG                              // if debug enabled write message
+ #ifdef DEBUG                              // if debug enabled write message
       Serial.println(F(" status is now active "));
-#endif
+ #endif
     } else {  // Amp is in active mode so we have to change it to passive
-#ifdef DEBUG  // if debug enabled write message
-      Serial.print(F(" changePassive : moving from active to passive,  "));
-#endif
+ #ifdef DEBUG  // if debug enabled write message
+      Serial.print(F(" ChangePassive : switch from preamp amp active to direct out,  "));
+ #endif
       InitData.DirectOut = true;           // make the boolean the correct value
       EEPROM.put(0, InitData);             // write new status to EEPROM
-      setRelayVolume(0, 0);                // switch volume off
-      delay(delay_plop);                   // wait to stabilize
+      SetRelayVolume(0, 0);                // switch volume off
+      delay(DelayPlop);                    // wait to stabilize
       digitalWrite(DirectOutState, HIGH);  // switch direct out relay on
       delay(100);                          // wait to stabilize
-      defineVolume(0);                     // define new volume level
-      setRelayVolume(AttenuatorLeft, AttenuatorRight);
+      DefineVolume(0);                     // define new volume level
+      SetRelayVolume(AttenuatorLeft, AttenuatorRight);
       WriteFixedValuesScreen();           //display info on oled screen
       WriteVolumeScreen(AttenuatorMain);  //display volume level on screen
-#ifdef DEBUG                              // if debug enabled write message
-      Serial.println(F(" status is now passive "));
-#endif
+ #ifdef DEBUG                              // if debug enabled write message
+      Serial.println(F(" status is now directout "));
+ #endif
     }
   }
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
-//// display the main menu on the screen
+//// display the main setup menu on the screen
 void MainSetupMenu() {
   int orgAttenuatorLevel = AttenuatorMain;  // save orginal attenuator level
   bool write = true;                        // used determine if we need to write volume level to screen
@@ -478,11 +458,11 @@ void MainSetupMenu() {
   unsigned long int idlePeriod = 30000;                            // idlePeriod you need to change something within menu otherwise quit menu
   unsigned long time_saved;                                        // used to help determine idle time
   if (!InitData.DirectOut) offset = offset + InitData.PreAmpGain;  // if amp not direct out add gain amp
-  if (muteEnabled) changeMute();                                   // if mute enabled disable mute
-#ifdef DEBUG                                                       // if debug enabled write message
+  if (muteEnabled) ChangeMute();                                   // if mute enabled disable mute
+ #ifdef DEBUG                                                       // if debug enabled write message
   Serial.println(F("setupMenu: Settings in EEPROM starting setup menu"));
   ListContentEEPROM();
-#endif
+ #endif
   button.loop();                               // make sure button is clean
   time_saved = millis();                       // save current time
   while (!quit) {                              // run as long as option for is not choosen
@@ -491,26 +471,26 @@ void MainSetupMenu() {
       break;
     }
     if (write) {  // write the menu
-      u8g2.clearBuffer();
-      u8g2.setFont(fontH10);
-      u8g2.setCursor(22, 10);
-      u8g2.print(F("SETUP MENU"));
-      u8g2.setFont(fontH08fixed);
-      u8g2.setCursor(0, 20);
-      u8g2.print(F("1 : Balance"));
-      u8g2.setCursor(0, 30);
-      u8g2.print(F("2 : Initial volume"));
-      u8g2.setCursor(0, 40);
-      u8g2.print(F("3 : Input channel name"));
-      u8g2.setCursor(0, 50);
-      u8g2.print(F("4 : General"));
-      u8g2.setCursor(0, 60);
-      u8g2.print(F("5 : Exit"));
+      Screen.clearBuffer();
+      Screen.setFont(fontH10);
+      Screen.setCursor(22, 10);
+      Screen.print(F("SETUP MENU"));
+      Screen.setFont(fontH08fixed);
+      Screen.setCursor(0, 20);
+      Screen.print(F("1 : Balance"));
+      Screen.setCursor(0, 30);
+      Screen.print(F("2 : Initial volume"));
+      Screen.setCursor(0, 40);
+      Screen.print(F("3 : Input channel name"));
+      Screen.setCursor(0, 50);
+      Screen.print(F("4 : General"));
+      Screen.setCursor(0, 60);
+      Screen.print(F("5 : Exit"));
       sprintf(VolInChar, "%i", choice);
-      u8g2.drawButtonUTF8(110, 60, U8G2_BTN_BW1, 0, 1, 1, VolInChar);
-      u8g2.sendBuffer();
+      Screen.drawButtonUTF8(110, 60, U8G2_BTN_BW1, 0, 1, 1, VolInChar);
+      Screen.sendBuffer();
     }
-    write = false;
+    write = false;                         // we assume nothing changed, so dont write menu
     if (AttenuatorChange != 0) {           // if AttenuatorChange is changed using rotary
       choice = choice + AttenuatorChange;  // change choice
       AttenuatorChange = 0;                // reset attenuatorchange
@@ -539,28 +519,28 @@ void MainSetupMenu() {
     }
   }
 
-  // save all data and restore sound and volume
+  // we quit menu, save all data and restore sound and volume
   EEPROM.put(0, InitData);     // save new values
   EEPROM.put(110, VolLevels);  // save volume levels
   if (RestoreOldVolAndChan) {
     AttenuatorMain = orgAttenuatorLevel;  // restore orginal attenuator level
-    defineVolume(0);                      // define volume levels
-    setRelayVolume(0, 0);                 // set volume level to 0
-    delay(delay_plop);
-    setRelayChannel(InitData.SelectedInput);  // set amp on prefered channel
-    delay(delay_plop);
-    setRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  // set relays to the temp  level
-    delay(delay_plop);
-    setRelayVolume(AttenuatorLeft, AttenuatorRight);  // set relays to the old  level
+    DefineVolume(0);                      // define volume levels
+    SetRelayVolume(0, 0);                 // set volume level to 0
+    delay(DelayPlop);
+    SetRelayChannel(InitData.SelectedInput);  // set amp on prefered channel
+    delay(DelayPlop);
+    SetRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  // set relays to the temp  level
+    delay(DelayPlop);
+    SetRelayVolume(AttenuatorLeft, AttenuatorRight);  // set relays to the old  level
   }
-  u8g2.clearBuffer();                 // clean memory screen
+  Screen.clearBuffer();                 // clean memory screen
   WriteFixedValuesScreen();           // display info on screen
   WriteVolumeScreen(AttenuatorMain);  // display volume level on oled screen
-  u8g2.sendBuffer();                  // write memory to screen
-#ifdef DEBUG                          // if debug enabled write message
+  Screen.sendBuffer();                  // write memory to screen
+ #ifdef DEBUG                          // if debug enabled write message
   Serial.println(F("setupMenu: Settings in EEPROM ending setup menu"));
   ListContentEEPROM();
-#endif
+ #endif
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// procedure to change the names display for the input channels
@@ -580,51 +560,51 @@ void SetupMenuChangeNameInputChan() {
   unsigned long pressedTime = 0;                                            // used for detecting pressed time
   unsigned long releasedTime = 0;                                           // used for detecting pressen time
   char CharsAvailable[40] = { "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 -:" };  // list of chars available for name input channel
-  u8g2.clearBuffer();
-  u8g2.setFont(fontH10);
-  u8g2.setCursor(5, 10);
-  u8g2.print(F("Input channel name"));  // print header
-  u8g2.setFont(fontH08fixed);
-  for (int i = 1; i < 5; i++) {  // print current names of channels
-    u8g2.setCursor(0, (20 + (i * 10)));
-    u8g2.print(InitData.InputTekst[i]);
+  Screen.clearBuffer();
+  Screen.setFont(fontH10);
+  Screen.setCursor(5, 10);
+  Screen.print(F("Input channel name"));                                      // print header
+  Screen.setFont(fontH08fixed);
+  for (int i = 1; i < 5; i++) {                                             // print current names of channels
+    Screen.setCursor(0, (20 + (i * 10)));
+    Screen.print(InitData.InputTekst[i]);
   }
-  u8g2.sendBuffer();
-  button.loop();
+  Screen.sendBuffer();                                                        // send content to screen
+  button.loop();                                                            
   time_saved = millis();
-  while (!quit) {                              // loop through the different channels
-    if (millis() > time_saved + idlePeriod) {  // timeout to verify if still somebody doing something
+  while (!quit) {                              // loop through the different channel names
+    if (millis() > time_saved + idlePeriod) {  // verify if still somebody doing something
       quit = true;
       break;
     }
-    SelectedChar = 0;                            // select the first char
-    while ((!quit) && (!isLongDetected)) {       //loop through name of channel
-      if (millis() > time_saved + idlePeriod) {  //timout to verify if still somebody doing something
+    SelectedChar = 0;                            // select the first char of the channel name
+    while ((!quit) && (!isLongDetected)) {       // loop through name of channel
+      if (millis() > time_saved + idlePeriod) {  // verify if still somebody doing something
         quit = true;
         break;
       }
-      write = true;                                                 // force to wriite first char
-      while ((!isShortDetected) && (!quit) && (!isLongDetected)) {  //loop to change a char
-        if (millis() > time_saved + idlePeriod) {                   // timeout to verify if still somebody doing something
+      write = true;                                                 // force to write first char
+      while ((!isShortDetected) && (!quit) && (!isLongDetected)) {  // loop to change a char
+        if (millis() > time_saved + idlePeriod) {                   // verify if still somebody doing something
           quit = true;
           break;
         }
-        if (write) {  // if char is changed
+        if (write) {  // if char is changed write char
           char buf[2];
           sprintf(buf, "%c", InitData.InputTekst[InputChan][SelectedChar]);  // change first char
           strcpy(VolInChar, buf);
-          u8g2.setDrawColor(0);  // clean letter part in buffer
-          u8g2.drawBox(99, 44, 16, 16);
-          u8g2.setDrawColor(1);
-          u8g2.setFont(fontH10);
-          u8g2.setCursor(100, 54);
-          u8g2.print(VolInChar);  // write letter
-          u8g2.setDrawColor(0);   // clean channel name  part in buffer
-          u8g2.drawBox((5 * SelectedChar), (10 + (InputChan * 10)), 6, 11);
-          u8g2.setDrawColor(1);
-          u8g2.setFont(fontH08fixed);
-          u8g2.drawButtonUTF8((5 * SelectedChar), (20 + (InputChan * 10)), U8G2_BTN_INV, 0, 0, 0, VolInChar);  // write char inverse
-          u8g2.sendBuffer();
+          Screen.setDrawColor(0);  // clean letter part in buffer
+          Screen.drawBox(99, 44, 16, 16);
+          Screen.setDrawColor(1);
+          Screen.setFont(fontH10);
+          Screen.setCursor(100, 54);
+          Screen.print(VolInChar);  // write letter
+          Screen.setDrawColor(0);   // clean channel name part in buffer
+          Screen.drawBox((5 * SelectedChar), (10 + (InputChan * 10)), 6, 11);
+          Screen.setDrawColor(1);
+          Screen.setFont(fontH08fixed);
+          Screen.drawButtonUTF8((5 * SelectedChar), (20 + (InputChan * 10)), U8G2_BTN_INV, 0, 0, 0, VolInChar);  // write char inverse
+          Screen.sendBuffer();
           for (int CharPos = 0; CharPos < 38; CharPos++) {  // detect which pos is of current char in charoptions
             if (InitData.InputTekst[InputChan][SelectedChar] == CharsAvailable[CharPos]) {
               CurCharPos = CharPos;
@@ -663,12 +643,12 @@ void SetupMenuChangeNameInputChan() {
           if (pressDuration > LongPressTime) isLongDetected = true;
         }
       }
-      u8g2.setDrawColor(0);  // clean channel name  part in buffer
-      u8g2.drawBox(0, (10 + (InputChan * 10)), 128, 12);
-      u8g2.setDrawColor(1);
-      u8g2.setCursor(0, (20 + (InputChan * 10)));
-      u8g2.print(InitData.InputTekst[InputChan]);
-      u8g2.sendBuffer();
+      Screen.setDrawColor(0);  // clean channel name  part in buffer
+      Screen.drawBox(0, (10 + (InputChan * 10)), 128, 12);
+      Screen.setDrawColor(1);
+      Screen.setCursor(0, (20 + (InputChan * 10)));
+      Screen.print(InitData.InputTekst[InputChan]);
+      Screen.sendBuffer();
       isShortDetected = false;
       SelectedChar++;
       if (SelectedChar > 10) SelectedChar = 0;  // only allow chars within specific range to be changed.
@@ -714,27 +694,27 @@ void SetupMenuGeneral() {
   unsigned long time_saved;              // used to help determine idle time
   unsigned long pressedTime = 0;         // time button was pressed
   unsigned long releasedTime = 0;        // time buttons was released
-  u8g2.clearBuffer();                    // write menu including all variables
-  u8g2.setFont(fontH10);
-  u8g2.setCursor(42, 10);
-  u8g2.print(F("General"));
-  u8g2.setFont(fontH08fixed);
-  u8g2.setCursor(0, 20);
-  u8g2.print(F("Brightness screen"));
-  u8g2.setCursor(0, 31);
-  u8g2.print(F("Preamp gain"));
-  u8g2.setCursor(0, 42);
-  u8g2.print(F("Startup delay"));
-  u8g2.setCursor(110, 20);
-  u8g2.print(F(" "));
-  u8g2.print(InitData.ContrastLevel);
-  u8g2.setCursor(110, 31);
-  if (InitData.PreAmpGain < 10) u8g2.print(F(" "));
-  u8g2.print(InitData.PreAmpGain);
-  u8g2.setCursor(110, 42);
-  if (InitData.StartDelayTime < 10) u8g2.print(F(" "));
-  u8g2.print(InitData.StartDelayTime);
-  u8g2.sendBuffer();
+  Screen.clearBuffer();                    // write menu including all variables
+  Screen.setFont(fontH10);
+  Screen.setCursor(42, 10);
+  Screen.print(F("General"));
+  Screen.setFont(fontH08fixed);
+  Screen.setCursor(0, 20);
+  Screen.print(F("Brightness screen"));
+  Screen.setCursor(0, 31);
+  Screen.print(F("Preamp gain"));
+  Screen.setCursor(0, 42);
+  Screen.print(F("Startup delay"));
+  Screen.setCursor(110, 20);
+  Screen.print(F(" "));
+  Screen.print(InitData.ContrastLevel);
+  Screen.setCursor(110, 31);
+  if (InitData.PreAmpGain < 10) Screen.print(F(" "));
+  Screen.print(InitData.PreAmpGain);
+  Screen.setCursor(110, 42);
+  if (InitData.StartDelayTime < 10) Screen.print(F(" "));
+  Screen.print(InitData.StartDelayTime);
+  Screen.sendBuffer();
   button.loop();                          // verify button is clean
   while ((!isLongDetected) && (!quit)) {  // loop this page as long as no long press and no timeout run menu
     write = true;
@@ -746,15 +726,15 @@ void SetupMenuGeneral() {
         break;
       }
       if (write) {             // if changed rewrite value of brightness
-        u8g2.setDrawColor(0);  // clean brightness part in buffer
-        u8g2.drawBox(108, 12, 20, 12);
-        u8g2.setDrawColor(1);
+        Screen.setDrawColor(0);  // clean brightness part in buffer
+        Screen.drawBox(108, 12, 20, 12);
+        Screen.setDrawColor(1);
         strcpy(VolInChar, " ");  // convert int to char using right spacing
         char buf[2];
         sprintf(buf, "%i", InitData.ContrastLevel);
         strcat(VolInChar, buf);
-        u8g2.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, VolInChar);  // print value using a box
-        u8g2.sendBuffer();                                               // copy memory to screen
+        Screen.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, VolInChar);  // print value using a box
+        Screen.sendBuffer();                                               // copy memory to screen
       }
       write = false;                                                         // assume no changes
       if (AttenuatorChange != 0) {                                           // if AttenuatorChange is changed using rotary
@@ -769,7 +749,7 @@ void SetupMenuGeneral() {
           InitData.ContrastLevel = 0;
           write = false;
         }
-        u8g2.setContrast((((InitData.ContrastLevel * 2) + 1) << 4) | 0x0f);  // set new value of brightness (1-254)
+        Screen.setContrast((((InitData.ContrastLevel * 2) + 1) << 4) | 0x0f);  // set new value of brightness (1-254)
         time_saved = millis();                                               // save time of last change
       }
       button.loop();  // check if and how button is pressed
@@ -789,26 +769,26 @@ void SetupMenuGeneral() {
         if (pressDuration > LongPressTime) isLongDetected = true;
       }
     }                      // finished changing brightness
-    u8g2.setDrawColor(0);  // write value to screen without box
-    u8g2.drawBox(108, 12, 20, 12);
-    u8g2.setDrawColor(1);
-    u8g2.setCursor(110, 20);
-    u8g2.print(F(" "));
-    u8g2.print(InitData.ContrastLevel);
-    u8g2.sendBuffer();
+    Screen.setDrawColor(0);  // write value to screen without box
+    Screen.drawBox(108, 12, 20, 12);
+    Screen.setDrawColor(1);
+    Screen.setCursor(110, 20);
+    Screen.print(F(" "));
+    Screen.print(InitData.ContrastLevel);
+    Screen.sendBuffer();
     isShortDetected = false;                                      // reset short push detected
     write = true;                                                 // set write to true so we start correctly preamp gain
     time_saved = millis();                                        // save time of last change
-                                                                  /////////////////////////change amp gain
+    /////////////////////////change amp gain
     while ((!isShortDetected) && (!quit) && (!isLongDetected)) {  // loop to change amp offset
       if (millis() > time_saved + idlePeriod) {                   // timeout to verify if still somebody doing something
         quit = true;
         break;
       }
       if (write) {             // if amp gain is changed
-        u8g2.setDrawColor(0);  // clean part of amp gaing in memory
-        u8g2.drawBox(108, 23, 20, 12);
-        u8g2.setDrawColor(1);
+        Screen.setDrawColor(0);  // clean part of amp gaing in memory
+        Screen.drawBox(108, 23, 20, 12);
+        Screen.setDrawColor(1);
         if (InitData.PreAmpGain < 10) {  // change int into char with correct spacing
           strcpy(VolInChar, " ");
         } else {
@@ -817,8 +797,8 @@ void SetupMenuGeneral() {
         char buf[3];
         sprintf(buf, "%i", InitData.PreAmpGain);
         strcat(VolInChar, buf);
-        u8g2.drawButtonUTF8(110, 31, U8G2_BTN_BW1, 0, 1, 1, VolInChar);  //write amp gain with a box
-        u8g2.sendBuffer();
+        Screen.drawButtonUTF8(110, 31, U8G2_BTN_BW1, 0, 1, 1, VolInChar);  //write amp gain with a box
+        Screen.sendBuffer();
       }
       write = false;
       if (AttenuatorChange != 0) {                                     // if AttenuatorChange is changed using rotary
@@ -852,26 +832,26 @@ void SetupMenuGeneral() {
         if (pressDuration > LongPressTime) isLongDetected = true;
       }
     }                      // amp gain is set
-    u8g2.setDrawColor(0);  // clean amp gain  part in buffer
-    u8g2.drawBox(108, 23, 20, 12);
-    u8g2.setDrawColor(1);
-    u8g2.setCursor(110, 31);  // write value of amp gain without box in correct setup
-    if (InitData.PreAmpGain < 10) u8g2.print(F(" "));
-    u8g2.print(InitData.PreAmpGain);
-    u8g2.sendBuffer();
+    Screen.setDrawColor(0);  // clean amp gain  part in buffer
+    Screen.drawBox(108, 23, 20, 12);
+    Screen.setDrawColor(1);
+    Screen.setCursor(110, 31);  // write value of amp gain without box in correct setup
+    if (InitData.PreAmpGain < 10) Screen.print(F(" "));
+    Screen.print(InitData.PreAmpGain);
+    Screen.sendBuffer();
     isShortDetected = false;                                      // reset short push detected
     write = true;                                                 // set write to true so we start correctly preamp gain
     time_saved = millis();                                        // save time of last change
-                                                                  /////////////////////////change delay after power on
+    /////////////////////////change delay after power on
     while ((!isShortDetected) && (!quit) && (!isLongDetected)) {  // loop to change startup delay
-      if (millis() > time_saved + idlePeriod) {                   // timeout to verify if still somebody doing something
+      if (millis() > time_saved + idlePeriod) {                   // verify if still somebody doing something
         quit = true;
         break;
       }
       if (write) {             // if amp gain is changed
-        u8g2.setDrawColor(0);  // clean delay part in buffer
-        u8g2.drawBox(108, 34, 20, 12);
-        u8g2.setDrawColor(1);
+        Screen.setDrawColor(0);  // clean delay part in buffer
+        Screen.drawBox(108, 34, 20, 12);
+        Screen.setDrawColor(1);
         if (InitData.StartDelayTime < 10) {  // change value from int into char using correct spacing
           strcpy(VolInChar, " ");
         } else {
@@ -880,8 +860,8 @@ void SetupMenuGeneral() {
         char buf[3];
         sprintf(buf, "%i", InitData.StartDelayTime);
         strcat(VolInChar, buf);
-        u8g2.drawButtonUTF8(110, 42, U8G2_BTN_BW1, 0, 1, 1, VolInChar);  // write value in char in a box
-        u8g2.sendBuffer();
+        Screen.drawButtonUTF8(110, 42, U8G2_BTN_BW1, 0, 1, 1, VolInChar);  // write value in char in a box
+        Screen.sendBuffer();
       }
       write = false;
       if (AttenuatorChange != 0) {                                             // if AttenuatorChange is changed using rotary
@@ -915,13 +895,13 @@ void SetupMenuGeneral() {
         if (pressDuration > LongPressTime) isLongDetected = true;
       }
     }                      // start delay is set
-    u8g2.setDrawColor(0);  // clean start delay part in buffer
-    u8g2.drawBox(108, 34, 20, 12);
-    u8g2.setDrawColor(1);
-    u8g2.setCursor(110, 42);  // write value delay to buffer without box
-    if (InitData.StartDelayTime < 10) u8g2.print(F(" "));
-    u8g2.print(InitData.StartDelayTime);
-    u8g2.sendBuffer();
+    Screen.setDrawColor(0);  // clean start delay part in buffer
+    Screen.drawBox(108, 34, 20, 12);
+    Screen.setDrawColor(1);
+    Screen.setCursor(110, 42);  // write value delay to buffer without box
+    if (InitData.StartDelayTime < 10) Screen.print(F(" "));
+    Screen.print(InitData.StartDelayTime);
+    Screen.sendBuffer();
     isShortDetected = false;  // reset short push detected
   }
 }
@@ -941,53 +921,53 @@ void SetupMenuInitVol() {
   unsigned long pressedTime = 0;                                   // time button was pressed
   unsigned long releasedTime = 0;                                  // time button was released
   if (!InitData.DirectOut) offset = offset + InitData.PreAmpGain;  // determine offset between internal volume and vol displayed on screen
-  u8g2.clearBuffer();
-  u8g2.setFont(fontH10);
-  u8g2.setCursor(38, 10);
-  u8g2.print(F("Init volume"));  // write header
+  Screen.clearBuffer();
+  Screen.setFont(fontH10);
+  Screen.setCursor(38, 10);
+  Screen.print(F("Init volume"));  // write header
   button.loop();
   time_saved = millis();
   while ((!isLongDetected) && (!quit)) {       // loop this page as long as rotary button not long pressed and action is detected
-    if (millis() > time_saved + idlePeriod) {  // timeout to verify if still somebody doing something
+    if (millis() > time_saved + idlePeriod) {  // verify if still somebody doing something
       quit = true;
       break;
     }
     write = true;  // something changed
-    u8g2.setFont(fontH08fixed);
+    Screen.setFont(fontH08fixed);
     while ((!isShortDetected) && (!quit) && (!isLongDetected)) {  // loop to determine  volume/channel or general volume
-      if (millis() > time_saved + idlePeriod) {                   // timeout to verify if still somebody doing something
+      if (millis() > time_saved + idlePeriod) {                   // verify if still somebody doing something
         quit = true;
         break;
       }
-      u8g2.setCursor(0, 20);
-      u8g2.print(F("Volume per channel"));                             // write line defining what to change
+      Screen.setCursor(0, 20);
+      Screen.print(F("Volume per channel"));                             // write line defining what to change
       if (write) {                                                     // if something changed
         if (InitData.VolPerChannel) {                                  // if we have vol/channel
-          u8g2.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, "YES");  // write yes in a box
+          Screen.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, "YES");  // write yes in a box
           for (int i = 1; i < 5; i++) {                                // write the port description and the current levels
-            u8g2.setCursor(0, (20 + (i * 10)));
-            u8g2.print(InitData.InputTekst[i]);
-            u8g2.setCursor(110, (20 + (i * 10)));
-            u8g2.print(ChVolInChar3(VolLevels[i] + offset));
+            Screen.setCursor(0, (20 + (i * 10)));
+            Screen.print(InitData.InputTekst[i]);
+            Screen.setCursor(110, (20 + (i * 10)));
+            Screen.print(ChVolInChar3(VolLevels[i] + offset));
           }
         } else {  // if we have a general volume level
-          u8g2.setCursor(110, 24);
-          u8g2.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, " NO");  // write no in a box
-          u8g2.setCursor(0, 31);                                       // write general description and the current level
-          u8g2.print(InitData.InputTekst[0]);
-          u8g2.setCursor(110, 31);
-          u8g2.print(ChVolInChar3(VolLevels[0] + offset));
+          Screen.setCursor(110, 24);
+          Screen.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, " NO");  // write no in a box
+          Screen.setCursor(0, 31);                                       // write general description and the current level
+          Screen.print(InitData.InputTekst[0]);
+          Screen.setCursor(110, 31);
+          Screen.print(ChVolInChar3(VolLevels[0] + offset));
         }
-        u8g2.sendBuffer();  // copy memory to screen
+        Screen.sendBuffer();  // copy memory to screen
       }
       write = false;
       if (AttenuatorChange != 0) {                           // if rotary is turned
         InitData.VolPerChannel = (!InitData.VolPerChannel);  // invert the setting if we use vol/channel yes no
         AttenuatorChange = 0;                                // reset AttenuatorChange
-        u8g2.setDrawColor(0);                                // clean memory part of yes/no of volume per channel and rest of screen
-        u8g2.drawBox(0, 14, 127, 50);
-        u8g2.drawBox(108, 12, 20, 12);
-        u8g2.setDrawColor(1);
+        Screen.setDrawColor(0);                                // clean memory part of yes/no of volume per channel and rest of screen
+        Screen.drawBox(0, 14, 127, 50);
+        Screen.drawBox(108, 12, 20, 12);
+        Screen.setDrawColor(1);
         write = true;
         time_saved = millis();  // save time of last change
       }
@@ -1008,31 +988,31 @@ void SetupMenuInitVol() {
         if (pressDuration > LongPressTime) isLongDetected = true;
       }
     }                      // volume/channel is set
-    u8g2.setDrawColor(0);  // clean volume part in buffer
-    u8g2.drawBox(108, 12, 20, 12);
-    u8g2.setDrawColor(1);
-    u8g2.setFont(fontH08fixed);
+    Screen.setDrawColor(0);  // clean volume part in buffer
+    Screen.drawBox(108, 12, 20, 12);
+    Screen.setDrawColor(1);
+    Screen.setFont(fontH08fixed);
     if (InitData.VolPerChannel) {  // write correct value without box
-      u8g2.setCursor(110, 20);
-      u8g2.print("YES");
+      Screen.setCursor(110, 20);
+      Screen.print("YES");
     } else {
-      u8g2.setCursor(110, 20);
-      u8g2.print(" NO");
+      Screen.setCursor(110, 20);
+      Screen.print(" NO");
     }
-    u8g2.sendBuffer();
+    Screen.sendBuffer();
     isShortDetected = false;
     ///////////////  set values per channel or generic volume
     if (InitData.VolPerChannel) {                  // we have volume / channel
       for (int i = 1; i < 5; i++) {                // run loop for  4 volumes per channel
-        if (millis() > time_saved + idlePeriod) {  // timeout to verify if still somebody doing something
+        if (millis() > time_saved + idlePeriod) {  // verify if still somebody doing something
           quit = true;
           break;
         }
         if ((!quit) && (!isLongDetected)) {  // only when we not quiting the for loop, if we quit commands are not needed
           write = true;
-          setRelayVolume(0, 0);
-          delay(delay_plop);
-          setRelayChannel(i);  // select the correct input channel
+          SetRelayVolume(0, 0);
+          delay(DelayPlop);
+          SetRelayChannel(i);  // select the correct input channel
         }
         while ((!isShortDetected) && (!quit) && (!isLongDetected)) {  // loop to set value for a specific channel
           if (millis() > time_saved + idlePeriod) {                   // timeout to verify if still somebody doing something
@@ -1041,15 +1021,15 @@ void SetupMenuInitVol() {
           }
           if (write) {                                              // if volume level changed
             AttenuatorMain = VolLevels[i];                          // set the main volume to the level of the channel
-            defineVolume(0);                                        // calculate vol levels
-            setRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
-            delay(delay_plop);
-            setRelayVolume(AttenuatorLeft, AttenuatorRight);  // set relays to final level
-            u8g2.setDrawColor(0);                             // clean volume part in buffer
-            u8g2.drawBox(108, (12 + (i * 10)), 20, 12);
-            u8g2.setDrawColor(1);
-            u8g2.drawButtonUTF8(110, (20 + (i * 10)), U8G2_BTN_BW1, 0, 1, 1, (ChVolInChar3(VolLevels[i] + offset)));  // write vol level in box
-            u8g2.sendBuffer();
+            DefineVolume(0);                                        // calculate vol levels
+            SetRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
+            delay(DelayPlop);
+            SetRelayVolume(AttenuatorLeft, AttenuatorRight);  // set relays to final level
+            Screen.setDrawColor(0);                             // clean volume part in buffer
+            Screen.drawBox(108, (12 + (i * 10)), 20, 12);
+            Screen.setDrawColor(1);
+            Screen.drawButtonUTF8(110, (20 + (i * 10)), U8G2_BTN_BW1, 0, 1, 1, (ChVolInChar3(VolLevels[i] + offset)));  // write vol level in box
+            Screen.sendBuffer();
           }
           write = false;
           if (AttenuatorChange != 0) {  // if AttenuatorChange is changed using rotary
@@ -1083,12 +1063,12 @@ void SetupMenuInitVol() {
             if (pressDuration > LongPressTime) isLongDetected = true;
           }
         }                      // volume level for specific channel is set
-        u8g2.setDrawColor(0);  // clean volume part in buffer
-        u8g2.drawBox(108, (12 + (i * 10)), 20, 12);
-        u8g2.setDrawColor(1);
-        u8g2.setCursor(110, (20 + (i * 10)));
-        u8g2.print(ChVolInChar3(VolLevels[i] + offset));  // write correct volume level without box around it
-        u8g2.sendBuffer();
+        Screen.setDrawColor(0);  // clean volume part in buffer
+        Screen.drawBox(108, (12 + (i * 10)), 20, 12);
+        Screen.setDrawColor(1);
+        Screen.setCursor(110, (20 + (i * 10)));
+        Screen.print(ChVolInChar3(VolLevels[i] + offset));  // write correct volume level without box around it
+        Screen.sendBuffer();
         isShortDetected = false;
       }
     } else {  // no volume/channel, so we set generic volume
@@ -1100,15 +1080,15 @@ void SetupMenuInitVol() {
         }
         if (write) {                                              // value is changed
           AttenuatorMain = VolLevels[0];                          // set main volume level to generic volume level
-          defineVolume(0);                                        // calculate volume levels
-          setRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  // set relays to the temp  level
-          delay(delay_plop);
-          setRelayVolume(AttenuatorLeft, AttenuatorRight);  // set relays to final version
-          u8g2.setDrawColor(0);                             // clean volume part in buffer
-          u8g2.drawBox(108, 22, 20, 12);
-          u8g2.setDrawColor(1);
-          u8g2.drawButtonUTF8(110, 31, U8G2_BTN_BW1, 0, 1, 1, (ChVolInChar3(VolLevels[0] + offset)));  // write new volume level in a box
-          u8g2.sendBuffer();
+          DefineVolume(0);                                        // calculate volume levels
+          SetRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  // set relays to the temp  level
+          delay(DelayPlop);
+          SetRelayVolume(AttenuatorLeft, AttenuatorRight);  // set relays to final version
+          Screen.setDrawColor(0);                             // clean volume part in buffer
+          Screen.drawBox(108, 22, 20, 12);
+          Screen.setDrawColor(1);
+          Screen.drawButtonUTF8(110, 31, U8G2_BTN_BW1, 0, 1, 1, (ChVolInChar3(VolLevels[0] + offset)));  // write new volume level in a box
+          Screen.sendBuffer();
         }
         write = false;
         if (AttenuatorChange != 0) {                       // if AttenuatorChange is changed using rotary
@@ -1142,12 +1122,12 @@ void SetupMenuInitVol() {
           if (pressDuration > LongPressTime) isLongDetected = true;
         }
       }                      // volume level for generic is set
-      u8g2.setDrawColor(0);  // clean volume part in buffer
-      u8g2.drawBox(108, 22, 20, 12);
-      u8g2.setDrawColor(1);
-      u8g2.setCursor(110, 31);
-      u8g2.print(ChVolInChar3(VolLevels[0] + offset));  // write correct volume level without box around it
-      u8g2.sendBuffer();
+      Screen.setDrawColor(0);  // clean volume part in buffer
+      Screen.drawBox(108, 22, 20, 12);
+      Screen.setDrawColor(1);
+      Screen.setCursor(110, 31);
+      Screen.print(ChVolInChar3(VolLevels[0] + offset));  // write correct volume level without box around it
+      Screen.sendBuffer();
       isShortDetected = false;
     }
   }
@@ -1168,49 +1148,49 @@ void SetupMenuBalance() {
   unsigned long pressedTime = 0;                                   // time button is pressed
   button.loop();                                                   // reset status of button
   if (!InitData.DirectOut) offset = offset + InitData.PreAmpGain;  // calculate correct value of offset of internal vol level
-  u8g2.setFont(fontH10);                                           // set font
-  u8g2.clearBuffer();
-  if (!daughterboard) {  // we need 2 boards to set balance.
-    u8g2.setCursor(0, 30);
-    u8g2.print(F("daughterboard missing"));
-    u8g2.sendBuffer();
-    delay(2000);
+  Screen.setFont(fontH10);                                           // set font
+  Screen.clearBuffer();
+  if (!DaughterBoard) {                                            // we need 2 boards to set balance.
+    Screen.setCursor(0, 30);
+    Screen.print(F("daughterboard missing"));
+    Screen.sendBuffer();
+    delay(2000);    
   } else {  // we have 2 boards
-    u8g2.setCursor(44, 10);
-    u8g2.print(F("balance"));  // print heading
-    u8g2.setCursor(11, 38);
-    u8g2.print(F("-------------+-------------"));
-    u8g2.setCursor(0, 63);
-    u8g2.print(F("L:               dB       R:"));
-    write = true;
-    time_saved = millis();                       // save time last change
-    while ((!isLongDetected) && (!quit)) {       // loop to set balance as long not quit and button not long pressed
-      if (millis() > time_saved + idlePeriod) {  // timeout to verify if still somebody doing something
+    Screen.setCursor(44, 10);
+    Screen.print(F("balance"));                                      // print heading
+    Screen.setCursor(11, 38);
+    Screen.print(F("-------------+-------------"));
+    Screen.setCursor(0, 63);
+    Screen.print(F("L:               dB       R:"));
+    write = true;                                                  // we assume something changed to write first time value
+    time_saved = millis();                                         // save time last change
+    while ((!isLongDetected) && (!quit)) {                         // loop to set balance as long not quit and button not long pressed
+      if (millis() > time_saved + idlePeriod) {                    // verify if still somebody doing something
         quit = true;
         break;
       }
       if (write) {                                                        // balance is changed
-        u8g2.drawGlyph((63 + (InitData.BalanceOffset * 4)), 50, 0x005E);  // write current balance using position
+        Screen.drawGlyph((63 + (InitData.BalanceOffset * 4)), 50, 0x005E);  // write current balance using position
         BalanceRight = (InitData.BalanceOffset >> 1);                     // divide balanceOffset using a bitshift to the right
         BalanceLeft = BalanceRight - InitData.BalanceOffset;              // difference is balance left
-        u8g2.setFont(fontH10figure);
-        u8g2.setDrawColor(0);  // clean balance part in buffer
-        u8g2.drawBox(16, 52, 24, 11);
-        u8g2.drawBox(110, 52, 24, 11);
-        u8g2.setDrawColor(1);
-        u8g2.setCursor(15, 63);  // write balance values into screen memory
-        u8g2.print(ChVolInChar2(BalanceLeft));
-        u8g2.setCursor(110, 63);
-        u8g2.print(ChVolInChar2(BalanceRight));
-        u8g2.sendBuffer();  // copy memory to screen
+        Screen.setFont(fontH10figure);
+        Screen.setDrawColor(0);  // clean balance part in buffer
+        Screen.drawBox(16, 52, 24, 11);
+        Screen.drawBox(110, 52, 24, 11);
+        Screen.setDrawColor(1);
+        Screen.setCursor(15, 63);  // write balance values into screen memory
+        Screen.print(ChVolInChar2(BalanceLeft));
+        Screen.setCursor(110, 63);
+        Screen.print(ChVolInChar2(BalanceRight));
+        Screen.sendBuffer();  // copy memory to screen
       }
       write = false;
       if (AttenuatorChange != 0) {  // if AttenuatorChange is changed using rotary
         write = true;               // balance is changed
-        u8g2.setFont(fontH10);
-        u8g2.setDrawColor(0);  // clean balance pointer in part in buffer
-        u8g2.drawBox((63 + (InitData.BalanceOffset * 4)), 39, 9, 8);
-        u8g2.setDrawColor(1);
+        Screen.setFont(fontH10);
+        Screen.setDrawColor(0);  // clean balance pointer in part in buffer
+        Screen.drawBox((63 + (InitData.BalanceOffset * 4)), 39, 9, 8);
+        Screen.setDrawColor(1);
         InitData.BalanceOffset = InitData.BalanceOffset + AttenuatorChange;  // calculate new balance offset
         AttenuatorChange = 0;                                                // reset value
         if (InitData.BalanceOffset > 14) {                                   // keep value between 10 and -10
@@ -1221,11 +1201,11 @@ void SetupMenuBalance() {
           InitData.BalanceOffset = -14;
           write = false;  // value was alread -14, no use to write
         }
-        u8g2.drawGlyph((63 + (InitData.BalanceOffset * 4)), 50, 0x005E);  // write current balance pointer using position
-        defineVolume(0);
-        setRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
-        delay(delay_plop);
-        setRelayVolume(AttenuatorLeft, AttenuatorRight);  // set new volume level with balance level
+        Screen.drawGlyph((63 + (InitData.BalanceOffset * 4)), 50, 0x005E);  // write current balance pointer using position
+        DefineVolume(0);
+        SetRelayVolume(AttenuatorLeftTmp, AttenuatorRightTmp);  //  set relays to the temp  level
+        delay(DelayPlop);
+        SetRelayVolume(AttenuatorLeft, AttenuatorRight);  // set new volume level with balance level
         time_saved = millis();                            // set time to last change
       }
       button.loop();  // check if button is pressed
@@ -1246,69 +1226,83 @@ void SetupMenuBalance() {
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // procedure to handle moving to and coming out of standby mode
-void changeStandby() {
-  if (Alive) {  // move from alive to standby, turn off screen, relays and amp
-#ifdef DEBUG    // if debug enabled write message
-    Serial.print(F(" changeStandby : moving from active to standby,  "));
-#endif
-    Alive = false;                   // we are in standby, alive is false
-    setRelayVolume(0, 0);            // set volume relays off
-    delay(delay_plop);               // wait to stabilize
-    setRelayChannel(0);              // disconnect all input channels
-    delay(100);                      // wait to stabilze
-    digitalWrite(StartDelay, LOW);   // disconnect amp from output
-    delay(100);                      // wait to stabilze
-    u8g2.clearDisplay();             // clear display
-    u8g2.setPowerSave(1);            // turn screen off
-    digitalWrite(PowerOnOff, LOW);   // make pin of power on low, power of amp is turned off
-    delay(3000);                     // we first wait for stable state
-    digitalWrite(LedStandby, HIGH);  // turn on standby led to indicate device is in standby
-#ifdef DEBUG                         // if debug enabled write message
+void ChangeStandby() {
+  if (InitData.Alive) {  // move from alive to standby, turn off screen, relays and amp
+ #ifdef DEBUG    // if debug enabled write message
+    Serial.print(F(" ChangeStandby : moving to standby,  "));
+ #endif
+    digitalWrite(LedStandby, HIGH);    // turn on standby led to indicate device is in standby
+    InitData.Alive = false;            // we are in standby, alive is false
+    EEPROM.put(0, InitData);           // write new status to EEPROM
+    SetRelayVolume(0, 0);              // set volume relays off
+    delay(DelayPlop);                  // wait to stabilize
+    SetRelayChannel(0);                // disconnect all input channels
+    delay(100);                        // wait to stabilze
+    digitalWrite(StartDelay, LOW);     // disconnect amp from output
+    delay(100);                        // wait to stabilze
+    digitalWrite(DirectOutState, LOW); // switch relay off
+    digitalWrite(HeadphoneOnOff, LOW); // switch relay off
+    Screen.clearDisplay();               // clear display
+    Screen.setPowerSave(1);              // turn screen off
+    digitalWrite(PowerOnOff, LOW);     // make pin of power on low, power of amp is turned off
+ #ifdef DEBUG                         // if debug enabled write message
     Serial.println(F(" status is now standby "));
-#endif
+ #endif
   } else {
-#ifdef DEBUG  // if debug enabled write message
-    Serial.print(F(" changeStandby : moving from standby to active,  "));
-#endif
-    Alive = true;                             // preamp is alive
+ #ifdef DEBUG  // if debug enabled write message
+    Serial.print(F(" ChangeStandby : moving to active,  "));
+ #endif
+    InitData.Alive = true;                    // preamp is alive
+    EEPROM.put(0, InitData);                  // write new status to EEPROM
     digitalWrite(LedStandby, LOW);            // turn off standby led to indicate device is powered on
     digitalWrite(PowerOnOff, HIGH);           // make pin of standby high, power of amp is turned on
-    delay(3000);                              // wait to stabilize
-    u8g2.setPowerSave(0);                     // turn screen on
-    waitForXseconds();                        // wait to let amp warm up
+    delay(1000);                              // wait to stabilize
+    Screen.setPowerSave(0);                     // turn screen on
+    WaitForXseconds();                        // wait to let amp warm up
     digitalWrite(StartDelay, HIGH);           // connect amp to output
     delay(100);                               // wait to stabilize
-    setRelayChannel(InitData.SelectedInput);  // select correct input channel
-    delay(100);                               // wait to stabilize
-    defineVolume(0);                          // define new volume level
-    if (!muteEnabled) {                       // if mute not enabled write volume to relay
-      setRelayVolume(AttenuatorLeft, AttenuatorRight);
+    if (InitData.DirectOut) {                 // if DirectOut is active set port high to active relay
+      digitalWrite(DirectOutState, HIGH);     // turn the preamp in directout mode
     }
-    WriteFixedValuesScreen();           //display info on oled screen
-    WriteVolumeScreen(AttenuatorMain);  // display volume level on oled screen
-#ifdef DEBUG                            // if debug enabled write message
+    SetRelayChannel(InitData.SelectedInput);  // select correct input channel
+    delay(DelayPlop);                         // wait to stabilize
+    if (InitData.HeadphoneActive) {           // headphone is active
+     digitalWrite(HeadphoneOnOff, HIGH);      // switch headphone relay on
+    }
+    if (InitData.VolPerChannel) {                          // if we have a dedicated volume level per channel give attenuatorlevel the correct value
+     AttenuatorMain = VolLevels[InitData.SelectedInput];   // if vol per channel select correct level
+    } else {                                               // if we dont have the a dedicated volume level per channel
+     AttenuatorMain = VolLevels[0];                        // give attenuator level the generic value
+    }
+    DefineVolume(0);                          // define new volume level
+    if (!muteEnabled) {                       // if mute not enabled write volume to relay
+      SetRelayVolume(AttenuatorLeft, AttenuatorRight);
+    }
+    WriteFixedValuesScreen();                 //display info on oled screen
+    WriteVolumeScreen(AttenuatorMain);        // display volume level on oled screen
+ #ifdef DEBUG                                 // if debug enabled write message
     Serial.println(F(" status is now active "));
-#endif
+ #endif
   }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Interrupt Service Routine for a change to Rotary Encoder pin A
-void rotaryTurn() {
+void RotaryTurn() {
   if (digitalRead(rotaryPinB)) {
-    AttenuatorChange = AttenuatorChange - 1;  // rotation left, turn volume down
+    AttenuatorChange = AttenuatorChange - 1;  // rotation left, turn down
   } else {
-    AttenuatorChange = AttenuatorChange + 1;  // rotatate right, turn volume Up!
+    AttenuatorChange = AttenuatorChange + 1;  // rotatate right, turn Up!
   }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Function to change to next inputchannel
-void changeInput(int change) {
-#ifdef DEBUG  // if debug enabled write message                                                       // if debug enabled write current state
-  Serial.print(F(" changeInput: old selected Input: "));
+void ChangeInput(int change) {
+ #ifdef DEBUG  // if debug enabled write message                                                
+  Serial.print(F(" ChangeInput: old selected Input: "));
   Serial.print(InitData.SelectedInput);
-#endif
+ #endif
   if (muteEnabled) {  // if mute enabled and change volume change mute status to off
-    changeMute();     // disable mute
+    ChangeMute();     // disable mute
   }
   InitData.SelectedInput = InitData.SelectedInput + change;        // increase or decrease current channel by 1
   if (InitData.SelectedInput > 4) { InitData.SelectedInput = 1; }  // implement round robbin for channel number
@@ -1317,34 +1311,34 @@ void changeInput(int change) {
   if (InitData.VolPerChannel) {                          // if we have a dedicated volume level per channel give attenuatorlevel
     AttenuatorMain = VolLevels[InitData.SelectedInput];  // if vol per channel select correct level
   }
-  setRelayVolume(0, 0);                     // set volume to zero
-  delay(delay_plop);                        // wait  to stabilize
-  setRelayChannel(InitData.SelectedInput);  // set relays to new input channel
+  SetRelayVolume(0, 0);                     // set volume to zero
+  delay(DelayPlop);                         // wait  to stabilize
+  SetRelayChannel(InitData.SelectedInput);  // set relays to new input channel
   delay(100);                               // wait to stabilize
-  defineVolume(0);                          // define new volume level
+  DefineVolume(0);                          // define new volume level
   if (!muteEnabled) {                       // if mute not enabled write volume to relay
-    setRelayVolume(AttenuatorLeft, AttenuatorRight);
+    SetRelayVolume(AttenuatorLeft, AttenuatorRight);
   }
   WriteFixedValuesScreen();                   //display info on oled screen
   WriteVolumeScreen(AttenuatorMain);          // update screen
-#ifdef DEBUG                                  // if debug enabled write message
+ #ifdef DEBUG                                 // if debug enabled write message
   Serial.print(F(", new Selected Input: "));  // write new channel number to debug
   Serial.println(InitData.SelectedInput);
-#endif
+ #endif
 }
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Functions to change volume
-void defineVolume(int increment) {
+void DefineVolume(int increment) {
   int AttenuatorLeftOld = AttenuatorLeft;    // save old value left channel
   int AttenuatorRightOld = AttenuatorRight;  // save old value right channel
-  VolumeChanged = true;
-  if ((muteEnabled) && (increment != 0)) {  // if mute enabled and change volume change mute status to off
-    changeMute();                           // disable mute
+  VolumeChanged = true;                      // assume volume is changed
+  if ((muteEnabled) && (increment != 0)) {   // if mute enabled and change volume change mute status to off
+    ChangeMute();                            // disable mute
   }
-#ifdef DEBUG  // if debug enabled write message
+ #ifdef DEBUG  // if debug enabled write message
   Serial.print(F("DefineVolume: volume was : "));
   Serial.println(AttenuatorMain);
-#endif
+ #endif
   AttenuatorMain = AttenuatorMain + increment;  // define new attenuator level
   if (AttenuatorMain > 63) {                    // volume cant be higher as 63
     AttenuatorMain = 63;
@@ -1358,7 +1352,7 @@ void defineVolume(int increment) {
     if (AttenuatorMain == 0) {  // If volume=0  both left and right set to 0
       AttenuatorRight = 0;
       AttenuatorLeft = 0;
-    } else if (!daughterboard) {  // if  no daughterboard we ignore balance
+    } else if (!DaughterBoard) {  // if  no daughterboard we ignore balance
       AttenuatorRight = AttenuatorMain;
       AttenuatorLeft = AttenuatorMain;
     } else {                                                      //amp in normal state, we use balance
@@ -1371,9 +1365,9 @@ void defineVolume(int increment) {
       if (AttenuatorRight < 0) { AttenuatorRight = 0; }           // volume lower as 0 not allowed
       if (AttenuatorLeft < 0) { AttenuatorLeft = 0; }             // volume lower as 0 not allowed
     }
-    AttenuatorLeftTmp = AttenuatorLeft & AttenuatorLeftOld;     //define intermediate volume levels to prevent plop
-    AttenuatorRightTmp = AttenuatorRight & AttenuatorRightOld;  //define intermediate volume levels to prevent plop
-#ifdef DEBUG                                                    // if debug enabled write message
+    AttenuatorLeftTmp = AttenuatorLeft & AttenuatorLeftOld;       //define intermediate volume levels to prevent plop
+    AttenuatorRightTmp = AttenuatorRight & AttenuatorRightOld;    //define intermediate volume levels to prevent plop
+ #ifdef DEBUG                                                      // if debug enabled write message
     Serial.print(F("DefineVolume: volume is now : "));
     Serial.print(AttenuatorMain);
     Serial.print(F(" volume left = "));
@@ -1394,96 +1388,96 @@ void defineVolume(int increment) {
     Serial.print(AttenuatorRight, BIN);
     Serial.print(F(",  headphones : "));
     Serial.println(InitData.HeadphoneActive);
-#endif
+ #endif
   }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Function to change mute
-void changeMute() {
+void ChangeMute() {
   if (muteEnabled) {                          // if mute enable we turn mute off
     muteEnabled = false;                      // change value of boolean
-    setRelayChannel(InitData.SelectedInput);  // set relays to support origical inputchnannel
+    SetRelayChannel(InitData.SelectedInput);  // set relays to support original inputchnannel
     delay(100);
-    defineVolume(0);  // define new volume level
-    setRelayVolume(AttenuatorLeft, AttenuatorRight);
-    WriteFixedValuesScreen();  //display info on oled screen
+    DefineVolume(0);                          // define new volume level
+    SetRelayVolume(AttenuatorLeft, AttenuatorRight);
+    WriteFixedValuesScreen();                 //display info on  screen
     WriteVolumeScreen(AttenuatorMain);
-#ifdef DEBUG  // if debug enabled write message
+ #ifdef DEBUG  // if debug enabled write message
     Serial.print(F("ChangeMute : Mute now disabled, setting volume to: "));
     Serial.println(AttenuatorMain);
-#endif
+ #endif
   } else {
-    muteEnabled = true;        // mete is not enabled so we turn mute on
-    setRelayVolume(0, 0);      // switch volume off
-    delay(delay_plop);         // set relays to zero volume
-    setRelayChannel(0);        // set relays to no input channel
+    muteEnabled = true;        // mute is not enabled so we turn mute on
+    SetRelayVolume(0, 0);      // switch volume off
+    delay(DelayPlop);          // set relays to zero volume
+    SetRelayChannel(0);        // set relays to no input channel
     WriteFixedValuesScreen();  //display info on oled screen
     WriteVolumeScreen(0);
-#ifdef DEBUG  // if debug enabled write message
-    Serial.println(F("Changemute: Mute enabled"));
-#endif
+ #ifdef DEBUG                  // if debug enabled write message
+    Serial.println(F("ChangeMute: Mute enabled"));
+ #endif
   }
 }
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // write stable values on the screen (mute, headphones, passive)
 void WriteFixedValuesScreen() {
-  u8g2.clearDisplay();
-  u8g2.setFont(fontgrahp);
+  Screen.clearDisplay();
+  Screen.setFont(fontgrahp);
   if (InitData.HeadphoneActive) {             // headphone is active
-    u8g2.drawGlyph(0, 36, 0x0043);            // write headphone symbol
+    Screen.drawGlyph(0, 36, 0x0043);            // write headphone symbol
   } else if (InitData.DirectOut) {            // amp is direct out
-    u8g2.drawTriangle(8, 16, 18, 26, 8, 36);  // write amp sign
-    u8g2.drawLine(2, 26, 22, 26);
-    u8g2.setDrawColor(0);
-    u8g2.drawTriangle(10, 21, 15, 26, 10, 31);
-    u8g2.setDrawColor(1);
-    u8g2.drawLine(2, 35, 19, 18);
-    u8g2.drawLine(2, 34, 19, 17);
+    Screen.drawTriangle(8, 16, 18, 26, 8, 36);  // write amp sign
+    Screen.drawLine(2, 26, 22, 26);
+    Screen.setDrawColor(0);
+    Screen.drawTriangle(10, 21, 15, 26, 10, 31);
+    Screen.setDrawColor(1);
+    Screen.drawLine(2, 35, 19, 18);
+    Screen.drawLine(2, 34, 19, 17);
   } else {  // amp is active write amp sign
-    u8g2.drawTriangle(8, 16, 18, 26, 8, 36);
-    u8g2.drawLine(2, 26, 22, 26);
-    u8g2.setDrawColor(0);
-    u8g2.drawTriangle(10, 21, 15, 26, 10, 31);
-    u8g2.setDrawColor(1);
+    Screen.drawTriangle(8, 16, 18, 26, 8, 36);
+    Screen.drawLine(2, 26, 22, 26);
+    Screen.setDrawColor(0);
+    Screen.drawTriangle(10, 21, 15, 26, 10, 31);
+    Screen.setDrawColor(1);
   }
-  u8g2.setFont(fontH14);  // write inputchannel
-  u8g2.setCursor(0, 63);
-  u8g2.print(InitData.InputTekst[InitData.SelectedInput]);
+  Screen.setFont(fontH14);  // write inputchannel
+  Screen.setCursor(0, 63);
+  Screen.print(InitData.InputTekst[InitData.SelectedInput]);
   if (InitData.BalanceOffset != 0) {                   // write balance values
     int BalanceRight = (InitData.BalanceOffset >> 1);  // divide balanceOffset using a bitshift to the right
     int BalanceLeft = BalanceRight - InitData.BalanceOffset;
-    u8g2.setDrawColor(0);  // clean balance part in buffer
-    u8g2.drawBox(0, 0, 128, 10);
-    u8g2.setDrawColor(1);
-    u8g2.setFont(fontH10);
-    u8g2.setCursor(0, 10);
-    u8g2.print("L:");
-    u8g2.setFont(fontH10figure);
-    u8g2.print(ChVolInChar2(BalanceLeft));
-    u8g2.setFont(fontH10);
-    u8g2.setCursor(98, 10);
-    u8g2.print("R:");
-    u8g2.setFont(fontH10figure);
-    u8g2.print(ChVolInChar2(BalanceRight));
-    u8g2.sendBuffer();
+    Screen.setDrawColor(0);                              // clean balance part in buffer
+    Screen.drawBox(0, 0, 128, 10);
+    Screen.setDrawColor(1);
+    Screen.setFont(fontH10);
+    Screen.setCursor(0, 10);
+    Screen.print("L:");
+    Screen.setFont(fontH10figure);
+    Screen.print(ChVolInChar2(BalanceLeft));
+    Screen.setFont(fontH10);
+    Screen.setCursor(98, 10);
+    Screen.print("R:");
+    Screen.setFont(fontH10figure);
+    Screen.print(ChVolInChar2(BalanceRight));
+    Screen.sendBuffer();
   } else {
-    u8g2.setDrawColor(0);  // clean balance part in buffer
-    u8g2.drawBox(0, 0, 128, 10);
-    u8g2.setDrawColor(1);
+    Screen.setDrawColor(0);                               // clean balance part in buffer
+    Screen.drawBox(0, 0, 128, 10);
+    Screen.setDrawColor(1);
   }
-  u8g2.sendBuffer();
+  Screen.sendBuffer();
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// intialisation of the oled screen after powerup of screen.
+// intialisation of the screen after powerup of screen.
 void OledSchermInit() {
-  digitalWrite(OledReset, LOW);                                        // set oled screen in reset mode
+  digitalWrite(OledReset, LOW);                                        // set screen in reset mode
   delay(15);                                                           // wait to stabilize
   digitalWrite(OledReset, HIGH);                                       // set screen active
   delay(15);                                                           // wait to stabilize
-  u8g2.setI2CAddress(OLED_Address * 2);                                // set oled I2C address
-  u8g2.begin();                                                        // init the screen
-  u8g2.setContrast((((InitData.ContrastLevel * 2) + 1) << 4) | 0x0f);  // set contrast level
-  u8g2.sendBuffer();
+  Screen.setI2CAddress(OLED_Address * 2);                                // set oled I2C address
+  Screen.begin();                                                        // init the screen
+  Screen.setContrast((((InitData.ContrastLevel * 2) + 1) << 4) | 0x0f);  // set contrast level, reduce number of options
+  Screen.sendBuffer();
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // write volume level to screen
@@ -1492,30 +1486,30 @@ void WriteVolumeScreen(int volume) {
   if (!InitData.DirectOut) {  // if the amp is not in direct out mode adjust volume displayed on screen
     offset = offset + InitData.PreAmpGain;
   }
-  volume = volume + offset;  // change volumelevel shown on screen, adding offset  u8g2.setFont(fontH21cijfer);
-  u8g2.setDrawColor(0);      // clean volume part in buffer
-  u8g2.drawBox(35, 13, 80, 31);
-  u8g2.setDrawColor(1);
+  volume = volume + offset;  // change volumelevel shown on screen, adding offset
+  Screen.setDrawColor(0);      // clean volume part in buffer
+  Screen.drawBox(35, 13, 80, 31);
+  Screen.setDrawColor(1);
   if (muteEnabled) {  // if mute is enabled write MUTE
-    u8g2.setFont(fontH14);
-    u8g2.drawStr(35, 34, "MUTE");
+    Screen.setFont(fontH14);
+    Screen.drawStr(35, 34, "MUTE");
   } else {                        // mute is not enabled, write volume on screen.
-    u8g2.setFont(fontH21cijfer);  // write volume
-    u8g2.setCursor(35, 37);
-    u8g2.print(ChVolInChar3(volume));
-    u8g2.setFont(fontH10);
-    u8g2.drawStr(87, 37, "dB");
+    Screen.setFont(fontH21cijfer);  // write volume
+    Screen.setCursor(35, 37);
+    Screen.print(ChVolInChar3(volume));
+    Screen.setFont(fontH10);
+    Screen.drawStr(87, 37, "dB");
   }
-  u8g2.sendBuffer();
+  Screen.sendBuffer();
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // set relays in status to support requested volume
-void setRelayVolume(int RelayLeft, int RelayRight) {
+void SetRelayVolume(int RelayLeft, int RelayRight) {
   Wire.beginTransmission(MCP23017_I2C_ADDRESS_bottom);  // write volume left to left ladder
   Wire.write(0x13);
   Wire.write(RelayLeft);
   Wire.endTransmission();
-  if (daughterboard) {                                 // if we have second board
+  if (DaughterBoard) {                                 // if we have second board
     Wire.beginTransmission(MCP23017_I2C_ADDRESS_top);  // write volume right to right ladder
     Wire.write(0x13);
     Wire.write(RelayRight);
@@ -1524,13 +1518,13 @@ void setRelayVolume(int RelayLeft, int RelayRight) {
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // set relays in status to support requested channnel
-void setRelayChannel(uint8_t relay) {
+void SetRelayChannel(uint8_t relay) {
   uint8_t inverseWord;
   if (relay == 0) {      // if no channel is selected, drop all ports, this is done during  mute
     inverseWord = 0xef;  // we write inverse, bit 4 = 0 as this one is not inverted
   } else {
     inverseWord = 0xFF ^ (0x01 << (relay - 1));                           // bitshift the number of ports to get a 1 at the correct port and inverse word
-    if ((1 == bitRead(InputPortType, (relay - 1))) && (daughterboard)) {  // determine if this is an xlr port
+    if ((1 == bitRead(InputPortType, (relay - 1))) && (DaughterBoard)) {  // determine if this is an xlr port
       bitClear(inverseWord, 4);                                           // if XLR set bit 4 to 0
     }
   }
@@ -1538,16 +1532,16 @@ void setRelayChannel(uint8_t relay) {
   Wire.write(0x12);
   Wire.write(inverseWord);
   Wire.endTransmission();
-  if (daughterboard) {                                 // if we have an additional board
+  if (DaughterBoard) {                                 // if we have an additional board
     Wire.beginTransmission(MCP23017_I2C_ADDRESS_top);  // write port settings to top board (right channel)
     Wire.write(0x12);
     Wire.write(inverseWord);
     Wire.endTransmission();
   }
-#ifdef DEBUG  // if debug enabled write message
-  Serial.print(F("setRelayChannel: bytes written to relays : "));
+ #ifdef DEBUG  // if debug enabled write message
+  Serial.print(F("SetRelayChannel: bytes written to relays : "));
   Serial.println(inverseWord, BIN);
-#endif
+ #endif
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //initialize the MCP23017 controling the relays;
@@ -1571,7 +1565,7 @@ void MCP23017init(uint8_t MCP23017_I2C_ADDRESS) {
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // detect log time press on remote controle
-bool detectLongPress(uint16_t aLongPressDurationMillis) {
+bool DetectLongPress(uint16_t aLongPressDurationMillis) {
   if (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT) {        // if repeat and not detected yet
     if (millis() - aLongPressDurationMillis > sMillisOfFirstReceive) {  // if this status takes longer as..
       sLongPressJustDetected = true;                                    // longpress detected
@@ -1585,29 +1579,29 @@ bool detectLongPress(uint16_t aLongPressDurationMillis) {
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // detect if the EEPROM contains an init config
-void checkIfEepromHasInit() {
-  char UniqueString[9] = "PreAmpV2";                            // unique string to check if eeprom already written
+void CheckIfEepromHasInit() {
+  char UniqueString[9] = "PreAmpV3";                            // unique string to check if eeprom already written
   EEPROM.get(0, InitData);                                      // get variables within init out of EEPROM
   for (byte index = 1; index < 9; index++) {                    // loop to compare strings
     if (InitData.UniqueString[index] != UniqueString[index]) {  // compare if strings differ, if so
-      writeEEprom();                                            // write eeprom
+      WriteEEprom();                                            // write eeprom
       break;                                                    // jump out of for loop
     }
-#ifdef DEBUG
+ #ifdef DEBUG
     if (index == 8) {  // index 8 is only possible if both strings are equal
-      Serial.println(F("checkIfEepromHasInit: init configuration found"));
+      Serial.println(F("CheckIfEepromHasInit: init configuration found"));
     }
-#endif
+ #endif
   }
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // write the EEProm with the correct values
-void writeEEprom() {
-#ifdef DEBUG
-  Serial.println(F("writeEEprom: no init config detected, writing new init config"));
-#endif
+void WriteEEprom() {
+ #ifdef DEBUG
+  Serial.println(F("WriteEEprom: no init config detected, writing new init config"));
+ #endif
   SavedData start = {
-    "PreAmpV2",  // unique string
+    "PreAmpV3",  // unique string
     false,       // boolean, volume level per channel
     1,           // channel used for start
     0,           // balance offset
@@ -1615,7 +1609,9 @@ void writeEEprom() {
     10,          // volume offset
     10,          // delay after power on to stabilize amp
     false,       // headphones active
-    false,       // ampassive active
+    false,       // direct out active
+    false,       // prev state of direct out
+    true,        // amp is alive, not in standby
     "Initial volume",
     "XLR  1     ",
     "XLR  2     ",
@@ -1671,8 +1667,10 @@ char* ChVolInChar3(int volume) {
     }
   }
 }
+////////////////////////////////////////////////////////////////////////////////////////////////
+//  debug proc to show content of eeprom
 #ifdef DEBUG
-void ListContentEEPROM() {
+ void ListContentEEPROM() {
   Serial.print(F("unique string         : "));
   Serial.println(InitData.Uniquestring);
   Serial.print(F("volume per channel    : "));
@@ -1689,8 +1687,12 @@ void ListContentEEPROM() {
   Serial.println(InitData.StartDelayTime);
   Serial.print(F("Headphones active     : "));
   Serial.println(InitData.HeadphoneActive);
-  Serial.print(F("DirectOut active     : "));
+  Serial.print(F("DirectOut active      : "));
   Serial.println(InitData.DirectOut);
+  Serial.print(F("Prev stat DirectOut   : "));
+  Serial.println(InitData.PrevStatusDirectOut);
+  Serial.print(F("Pre amp active/standby: "));
+  Serial.println(InitData.Alive);
   Serial.print(F("Generic volume level  : "));
   Serial.println(VolLevels[0]);
   Serial.print(F("volumelevel input 1   : "));
@@ -1711,21 +1713,21 @@ void ListContentEEPROM() {
   Serial.println(InitData.InputTekst[3]);
   Serial.print(F("Name channel 4        : "));
   Serial.println(InitData.InputTekst[4]);
-}
+ }
 #endif
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // function to check i2c bus
 #ifdef DEBUG
-void ScanI2CBus() {
-  uint8_t error;
-  uint8_t address;
-  int NumberOfDevices;
-  Serial.println(F("ScanI2CBus: I2C addresses defined within the code are : "));
+ void ScanI2CBus() {
+  uint8_t error;                                                      // error code
+  uint8_t address;                                                    // address to be tested
+  int NumberOfDevices;                                                // number of devices found
+  Serial.println(F("ScanI2CBus: I2C addresses defined within the code are : ")); // print content of code
   Serial.print(F("Screen             : 0x"));
   Serial.println(OLED_Address, HEX);
   Serial.print(F("Ladderboard bottom : 0x"));
   Serial.println(MCP23017_I2C_ADDRESS_bottom, HEX);
-  if (daughterboard) {
+  if (DaughterBoard) {
     Serial.print(F("Ladderboard top    : 0x"));
     Serial.println(MCP23017_I2C_ADDRESS_top, HEX);
   } else {
@@ -1733,11 +1735,11 @@ void ScanI2CBus() {
   }
   Serial.println(F("ScanI2C: Scanning..."));
   NumberOfDevices = 0;
-  for (address = 1; address < 127; address++) {
-    Wire.beginTransmission(address);
-    error = Wire.endTransmission();
-    if (error == 0) {
-      Serial.print("I2C device found at address 0x");
+  for (address = 1; address < 127; address++) {                                   // loop through addresses
+    Wire.beginTransmission(address);                                              // test address
+    error = Wire.endTransmission();                                               // resolve errorcode
+    if (error == 0) {                                                             // if address exist code is 0
+      Serial.print("I2C device found at address 0x");                             // print address info
       if (address < 16) Serial.print("0");
       Serial.println(address, HEX);
       NumberOfDevices++;
@@ -1748,5 +1750,5 @@ void ScanI2CBus() {
     Serial.print(F("ScanI2CBus: done, number of device found : "));
     Serial.println(NumberOfDevices);
   }
-}
+ }
 #endif
