@@ -28,15 +28,17 @@
 // v0.96 bug fixes
 //       made alive boolean persistant, so preamp starts up in previous mode (active/standby)
 //       made startup screen more customabel 
-// v.098 changed naming convention
+// v.98  changed naming convention
 //       to do, see if interupt can be changed.
+// v.99  updated rotary procedure and bug fix in standby in combination with mute
+// v1.0  turned debug off. removed disable/enable of interupts
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
-#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
+//#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
-const char* topTekst = "PeWalt, V 0.99";            // current version of the code, shown in startscreen top, content could be changed
+const char* topTekst = "PeWalt, V 1.00";            // current version of the code, shown in startscreen top, content could be changed
 const char* middleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
 const char* bottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -122,6 +124,7 @@ bool volumeChanged = false;               // defines if volume is changed
 #include <Wire.h>                          // include functions for i2c
 #include <ezButton.h>                      // include functions for debounce
 ezButton button(rotaryButton);             // create ezButton object  attached to the rotary button;
+#include <digitalWriteFast.h>              // include fast read used within interrupt routine
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for the compiler
 void defineVolume(int increment);                         // define volume levels
@@ -1309,15 +1312,15 @@ void changeStandby() {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Interrupt Service Routine for a change to Rotary Encoder pin A
 void rotaryTurn() {
-  pinAstateCurrent = digitalRead(rotaryPinA);    // Lees de huidige staat van Pin A
-  pinBstateCurrent = digitalRead(rotaryPinB);
+  pinAstateCurrent = digitalReadFast(rotaryPinA);    // Lees de huidige staat van Pin A
+  pinBstateCurrent = digitalReadFast(rotaryPinB);
   if ((pinAStateLast == LOW) && (pinAstateCurrent == HIGH)) {
-    if (pinBstateCurrent == HIGH) {attenuatorChange = attenuatorChange - 1;}
-    else {attenuatorChange = attenuatorChange + 1;}
+    if (pinBstateCurrent == HIGH) {attenuatorChange--;}
+    else {attenuatorChange++;}
   }
   else { 
-    if (pinBstateCurrent == LOW) {attenuatorChange = attenuatorChange - 1;}
-    else {attenuatorChange = attenuatorChange + 1;} 
+    if (pinBstateCurrent == LOW) {attenuatorChange--;}
+    else {attenuatorChange++;} 
   }
   pinAStateLast = pinAstateCurrent; 
 }
