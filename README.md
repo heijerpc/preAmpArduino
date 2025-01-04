@@ -39,24 +39,38 @@ Code is as is. No support, however we use the current version ourselves. Code ru
 
 You need to install the code on the Every using standard IDE. Code requires some additional libraries. If you are not familiar with the arduino please ask for any help from somebody who knows. Otherwise do a small course which are provided on the internet to understand how to load code on an arduino. 
 
-Due to "strange" default values used within the arduino we struggled with the stability of the NVram. Low voltage issues are monitored using a fuse. To write the correct value into the fuse you need to follow the following procedure:
-- go to file - preferences in the arduino IDE 
-- find "show verbose output during" and checkmark the box compile
-- load the preAmpArduino.ino 
-- Start compiling the code using the left hand button. when you see new output coming in the output window click the abort function 
-- scroll to the top of the output window
-- search for the line "Using core 'arduino' and copy the name of the folder (for instance : Using core 'arduino' from platform in folder: C:\Users\heije\AppData\Local\Arduino15\packages\arduino\hardware\megaavr\1.8.8
-- go back to file - preferences and uncheck the checkmark show verbose output during compile
-- now open the folder in file explorer (in my case  C:\Users\heije\AppData\Local\Arduino15\packages\arduino\hardware\megaavr\1.8.8)
-- change to the directory fuses
-- the directory contains 1 file : fuses_4809.bin
-- delete the file
-- copy the file fuses_4809.bin which is in the repro to the directory. (we replace the file, the new file has different settings for the fuse)
-- close file explorer
-- done!
-- If you like to revert best way is to delete the board manager Arduino megaAVR boards and install it again 
+Due to "strange" default values used within the arduino we struggled with the stability of the NVram. Low voltage issues are monitored using a fuse. However both Arduino IDE and PlatformIO do not write this fuse by default. The default value of the Arduino is disabled for the Brown Out Detetion (BOD). This means the cpu is not turned of if power drops. This could result in corrupted NVram. 2 options:
 
-The supporting files to build the boards are included.
+option 1
+If you like to use the Arduino IDE you need to write the BOD fuse once. As the Arduino IDE using the standard board manager does not support the BOD fuse we need to write it once using another board manager. As the standard board doesnt write it anymore we can go back to the standard board manager. Even with a power down the value of the BOD doesnt change. What to do:
+We first add another board manager:
+- go to file -> preferences and at the following line to Additonal  board managers URL:
+ https://mcudude.github.io/MegaCoreX/package_MCUdude_MegaCoreX_index.json 
+- go to board managers (second item from the top left hand side of the screen)
+- install the board manager MegaCoreX
+- now we have the option to select a different board manager from MegacoreX being the ATmega4809
+- when selected we can set some values in the tools menu:
+  bod at 4.3V
+  pinlayout nano every
+  Keep the rest as is
+- Now compile and download any prog to the arduino every
+- the bod is now set so we return back to the standard board manager
+- select the nano every again as board manager
+- reload the IDE
+- now you can compile and download the preAmp.ino 
+
+option 2
+Use PlatformIO as IDE. PlatformIO is capable of writing all fuses. However this requires some editing as also PlatformIO doesnt write the BOD by default. You need to change the nano_every.json file adding the fuse value
+of the bodcfg. This means you have to add the line "bodcfg":"0xE4". This will result in the following:
+
+ "fuses": {
+    "syscfg0": "0xC9",
+    "bootend": "0x00",
+    "osccfg": "0x01",
+    "bodcfg": "0xE4"
+  },
+
+ As a result PlatformIO will write the fuse bodcfg with a value of E4 which will enable brown out detection at 4.2V
 
 Again, we do not provide you support. We provide you the code, the design and all required files to build it yourself. You are also free to change anything 
 
