@@ -106,8 +106,7 @@ bool longPressJustDetected;           // used within IR procedures to determine 
 #define fontH21cijfer u8g2_font_timB24_tn            // 17w x 31h, char 23h
 char volInChar[4];                                   // used on many places to convert int to char
 #include <U8g2lib.h>                                 // include graphical based character mode library
-//U8G2_SSD1309_128X64_NONAME0_F_HW_I2C Screen(U8G2_R2);  // define the screen type used.
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C Screen(U8G2_R2);     
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C Screen(U8G2_R2,oledReset);  // define the screen type used.
 // definitions for the attenuator board
 #define mcp23017I2CAddressBottom 0x25     // I2C address of the relay board bottom
 #define mcp23017I2CAddressTop 0x26        // I2C address of the relay board daughterboard
