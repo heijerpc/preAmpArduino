@@ -35,16 +35,16 @@
 // v1.1  fixed issue with reading value to determine of nvram is changed
 //       changed ir lib to tiny receiver due to issues with timing in new version of lib
 //       fixed isue with nvram loosing due to power failures, fuse value adapted in IDE
+// v1.2  adapted to platformio 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
 //#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
-const char* topTekst = "PeWalt, V 1.1";            // current version of the code, shown in startscreen top, content could be changed
+const char* topTekst = "PeWalt, V 1.2";            // current version of the code, shown in startscreen top, content could be changed
 const char* middleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
 const char* bottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for EPROM writing
 #include <EEPROM.h>
 struct SavedData {         // definition of the data stored in eeprom
@@ -63,7 +63,6 @@ struct SavedData {         // definition of the data stored in eeprom
 };
 SavedData Amp;             // Amp is a structure defined by SavedData containing the values
 int VolLevels[5];          // Vollevels is an array storing initial volume level when switching to channel, used if VolPerChannel is true
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // pin definitions
 #define powerOnOff A0         // pin connected to the relay handeling power on/off of the amp
 #define headphoneOnOff A1     // pin connected to the relay handeling headphones active / not active
@@ -80,7 +79,6 @@ volatile int rotaryPinB = 4;  // encoder pin B,
 #define buttonMute 10         // pin  is connected to the button to change mute on/off, pullup
 #define ledStandby 11         // connected to a led that is on if amp is in standby mode
 #define oledReset 12          // connected to the reset port of Oled screen, used to reset Oled screen
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitons for the IR receiver
 #define DECODE_NEC        // only add NEC protocol to support apple remote, saves memory, fixed keyword
 #define USE_EXTENDED_NEC_PROTOCOL // Like NEC, but take the 16 bit address as one 16 bit value and not as 8 bit normal and 8 bit inverted value.
@@ -97,7 +95,6 @@ volatile int rotaryPinB = 4;  // encoder pin B,
 int delayTimer;                       // timer to delay between volume changes using IR, actual value set in main loop
 unsigned long milliSOfFirstReceive;   // used within IR procedures to determine if command is a repeat
 bool longPressJustDetected;           // used within IR procedures to determine if command is a repeat
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // definitions for the oled screen
 #define oledI2CAddress 0x3C                          // 3C is address used by oled controler
 #define fontH08 u8g2_font_timB08_tr                  // 11w x 11h, char 7h
@@ -109,8 +106,7 @@ bool longPressJustDetected;           // used within IR procedures to determine 
 #define fontH21cijfer u8g2_font_timB24_tn            // 17w x 31h, char 23h
 char volInChar[4];                                   // used on many places to convert int to char
 #include <U8g2lib.h>                                 // include graphical based character mode library
-U8G2_SSD1309_128X64_NONAME0_F_HW_I2C Screen(U8G2_R2);  // define the screen type used.
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C Screen(U8G2_R0);  // define the screen type used.
 // definitions for the attenuator board
 #define mcp23017I2CAddressBottom 0x25     // I2C address of the relay board bottom
 #define mcp23017I2CAddressTop 0x26        // I2C address of the relay board daughterboard
@@ -125,221 +121,13 @@ volatile int pinBstateCurrent = LOW;
 volatile int pinAStateLast = LOW;
 bool muteEnabled = false;                 // boolean, status of Mute
 bool volumeChanged = false;               // defines if volume is changed
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // general definitions
 #include <Wire.h>                          // include functions for i2c
 #include <ezButton.h>                      // include functions for debounce
 ezButton button(rotaryButton);             // create ezButton object  attached to the rotary button;
-//#include <digitalWriteFast.h>              // include fast read used within interrupt routine
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// definitions for the compiler
-void defineVolume(int increment);                         // define volume levels
-void rotaryTurn();                                        // interupt handler if rotary is turned
-void writeVolumeScreen(int volume);                       // write volume level to screen
-void writeFixedValuesScreen();                            // write info on left side screen (mute, passive, input)
-void oledSchermInit();                                    // init procedure for Oledscherm
-void mCP23017init(uint8_t MCP23017_I2C_ADDRESS);          // init procedure for relay extender
-void setRelayChannel(uint8_t Word);                       // set relays to selected input channel
-void setRelayVolume(int RelayLeft, int RelayRight);       // set relays to selected volume level
-void changeStandby();                                     // changes status of preamp between active and standby
-void changeHeadphone();                                   // change status of headphones between active and standby
-void changeDirectOut();                                   // change status of preamp between direct out and amplified
-void changeMute();                                        // enable and disable mute
-void changeInput(int change);                             // change the input channel
-void waitForXseconds();                                   // wait for number of seconds, used to warm up amp
-bool detectLongPress(uint16_t aLongPressDurationMillis);  // detect if multiple times key on remote controle is pushed
-void checkIfEepromHasInit();                              // check if EEPROM is configured correctly
-void writeEEprom();                                       // write initial values to the eeprom
-void mainSetupMenu();                                     // the main setup menu
-void setupMenuBalance();                                  // submenu, setting the balance
-void setupMenuInitVol();                                  // submenu, setting initial values of volume
-void setupMenuGeneral();                                  // submenu, setting general parameters
-void setupMenuChangeNameInputChan();                      // submenu, setting names of input channels
-char* chvolInChar3(int volume);                           // return 2 digit integer in char including +/-
-char* chvolInChar2(int volume);                           // return 1 digit integer in char including +/-
-void listContentEEPROM();                                 // used in debugPreAmp mode to print content of eeprom
-void scanI2CBus();                                        // used in debugPreAmp mode to scan the i2c bus
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Setup
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-void setup() {
-  // pin modes
-  pinMode(powerOnOff, OUTPUT);             // control the relay that provides power to the rest of the amp
-  pinMode(headphoneOnOff, OUTPUT);         // control the relay that switches headphones on and off
-  pinMode(directOutState, OUTPUT);         // control the relay that switches the preamp between direct out or active
-  pinMode(startDelay, OUTPUT);             // control the relay that connects amp to output ports
-  pinMode(rotaryPinA, INPUT_PULLUP);       // pin A rotary is high and its an input port
-  pinMode(rotaryPinB, INPUT_PULLUP);       // pin B rotary is high and its an input port
-  pinMode(buttonChannel, INPUT_PULLUP);    // button to change channel
-  pinMode(buttonStandby, INPUT_PULLUP);    // button to go into standby/active
-  pinMode(buttonHeadphone, INPUT_PULLUP);  // button to switch between AMP and headphone
-  pinMode(buttonDirectOut, INPUT_PULLUP);  // button to switch between passive and active mode
-  pinMode(buttonMute, INPUT_PULLUP);       // button to mute
-  pinMode(ledStandby, OUTPUT);             // led will be on when device is in standby mode
-  pinMode(oledReset, OUTPUT);              // set reset of oled screen
-  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // write init state to output pins
-  digitalWrite(powerOnOff, LOW);      // keep amp turned off
-  digitalWrite(headphoneOnOff, LOW);  // turn headphones off
-  digitalWrite(directOutState, LOW);  // turn the preamp in active state
-  digitalWrite(startDelay, LOW);      // disconnect amp from output
-  digitalWrite(ledStandby, LOW);      // turn off standby led to indicate device is becoming active
-  digitalWrite(oledReset, LOW);       // keep the Oled screen in reset mode
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// enable debugPreAmp to write to console if debugPreAmp is enabled
- #ifdef debugPreAmp
-  Serial.begin(9600);  // if debugPreAmplevel on start monitor screen
- #endif
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // // read setup values stored within the eeprom
-  checkIfEepromHasInit();      // check if eeprom has config file, otherwise write config
-  EEPROM.get(0, Amp);     // get variables within init out of EEPROM
-  EEPROM.get(110, VolLevels);  // get the array setting volume levels
- #ifdef debugPreAmp                   // if debugPreAmp enabled write message
-  Serial.println(F("initprog: the following values read from EEPROM"));
-  listContentEEPROM();
- #endif
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // Set up pins for rotary:
-  attachInterrupt(digitalPinToInterrupt(rotaryPinA), rotaryTurn, CHANGE);  // if pin encoderA changes run RotaryTurn
-  button.setDebounceTime(50);                                              // set debounce time to 50 milliseconds
-  ////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // startup IR
-  initPCIInterruptForTinyReceiver();  // Start the IR receiver
-  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // initialize the oled screen and relay extenderdelayPlop
-  Wire.begin();  // start i2c communication
-  delay(100);
- #ifdef debugPreAmp
-  scanI2CBus();  // in debugPreAmp mode show i2c addresses used
- #endif
-  oledSchermInit();  // intialize the Oled screen
-  delay(100);
-  mCP23017init(mcp23017I2CAddressBottom);  // initialize the relays
-  if (daughterBoard) {                     // if we have a daughterboard
-    mCP23017init(mcp23017I2CAddressTop);   // initialize daugterboard
-  }
-  setRelayVolume(0, 0);  // set volume relays to 0, just to be sure
-  delay(delayPlop);      // wait to stabilize
-  setRelayChannel(0);    // disconnect all input channels
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  // set input / volume / etc depending standby active state
-  Amp.Alive=!Amp.Alive; //invert bool so we can use standard standby proc
-  changeStandby();
- #ifdef debugPreAmp
-  Serial.println(F("setup: end of setup proc"));
- #endif
-}
-//////////////////////////////////////////////////////////////////////////////////////////////
-// Main loop
-//////////////////////////////////////////////////////////////////////////////////////////////
-void loop() {
-  if (Amp.Alive) {                                              // we only react if we are in alive state, not in standby
-    if (attenuatorChange != 0) {                                // if attenuatorChange is changed by the interupt we change volume/etc
-      defineVolume(attenuatorChange);                           // Calculate correct temp and end volumelevels
-      if (volumeChanged) {                                      // if volume is changed
-        setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  // set relays to the temp level
-        delay(delayPlop);                                       // wait to prevent plop
-        setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
-        writeVolumeScreen(attenuatorMain);                      // display volume level on oled screen
-      }
-      attenuatorChange = 0;  // reset the value to 0
-    }
-    if (digitalRead(buttonMute) == LOW) {  // if button mute is pushed
-      delay(500);                          // wait to prevent multiple switches
-      changeMute();                        // change status of mute
-    }
-    if (digitalRead(buttonChannel) == LOW) {  // if button channel switch is pushed
-      delay(500);                             // wait to prevent multiple switches
-      changeInput(1);                         // change input channel
-    }
-    if (digitalRead(buttonHeadphone) == LOW) {  // if button headphones switch is pushed
-      delay(500);                               // wait to prevent multiple switches
-      changeHeadphone();                        // change to headphone or back
-    }
-    if (digitalRead(buttonDirectOut) == LOW) {  // if button passive switch is pushed
-      delay(500);                               // wait to prevent multiple switches
-      changeDirectOut();                        // change active/passive state
-    }
-    button.loop();
-    if (button.isPressed()) {  // if rotary button is pushed go to setup menu
-      mainSetupMenu();         // start setup menu
-      delay(500);              // wait to prevent multiple switches
-    }
-  }
-  if (digitalRead(buttonStandby) == LOW) {  // if button standby is is pushed
-    delay(500);                             // wait to prevent multiple switches
-    changeStandby();                        // changes status
-  }
-  if (TinyReceiverDecode()) {      // if we receive data on the IR interface
-    if (detectLongPress(1500)) {  // simple function to increase speed of volume change by reducing wait time
-      delayTimer = 0;
-    } 
-    else {
-      delayTimer = 300;
-    }
-    if (TinyIRReceiverData.Address == 0x87EE) {
-      switch (TinyIRReceiverData.Command) {  // read the command field containing the code sent by the remote
+#include <digitalWriteFast.h>              // include fast read used within interrupt routine
 
-        case appleUp:
-          if (Amp.Alive) {        // we only react if we are in alive state, not in standby
-            defineVolume(1);           // calculate correct volume levels, plus 1
-            if (volumeChanged) {
-              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
-              delay(delayPlop);                                       // wait to prevent plop
-              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
-              writeVolumeScreen(attenuatorMain);                      // display volume level on screen
-            }
-            delay(delayTimer);
-          }
-          break;
-        case appleDown:
-          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
-            defineVolume(-1);               // calculate correct volume levels, minus 1
-            if (volumeChanged) {
-              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
-              delay(delayPlop);                                       // wait to prevent plop
-              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
-              writeVolumeScreen(attenuatorMain);                      // display volume level on oled screen
-            }
-            delay(delayTimer);
-          }
-          break;
-        case appleLeft:
-          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
-            changeInput(-1);           // change input channel
-            delay(300);
-          }
-          break;
-        case appleRight:
-          if (Amp.Alive) {            // we only react if we are in alive state, not in standby
-            changeInput(1);           // change input channel
-            delay(300);
-          }
-          break;
-        case appleForward:
-          changeStandby();            // switch status of standby
-          break;
-        case appleMiddle:
-          if (Amp.Alive) {            // we only react if we are in alive state, not in standby
-            changeMute();             // change mute
-            delay(300);
-          }
-          break;
-        case appleMenu:
-          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
-            changeDirectOut();         // switch between direct out and via preamp
-            delay(300);
-          }
-          break;
-      }
-      TinyReceiverDecode();  // clear buffer to drop any reads from ir to be excecuted received during excuting of code due to previous command
-    }
-  }
-}
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// delay the startup to wait for pre amp to stabilize, clears screen at start and end of proc
-void waitForXseconds() {
+void waitForXseconds() { // delay the startup to wait for pre amp to stabilize, clears screen at start and end of proc
  #ifdef debugPreAmp                           // if debugPreAmp enabled write message
   Serial.println(F("waitForXseconds: waiting for preamp to stabilize "));
  #endif
@@ -366,9 +154,8 @@ void waitForXseconds() {
   Serial.println(F("waitForXseconds: preamp wait time expired "));
  #endif
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// procedure to handle change of headphones status
-void changeHeadphone() {
+
+void changeHeadphone() {  // procedure to handle change of headphones status
   if (Amp.HeadPhoneActive) {   // headphone is active so we have to change to inactive
  #ifdef debugPreAmp                       // if debugPreAmp enabled write message
     Serial.print(F(" changeHeadphone : moving from active to inactive,  "));
@@ -421,9 +208,8 @@ void changeHeadphone() {
  #endif
   }
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// procedure to switch between direct out and pre amp amplifier
-void changeDirectOut() {
+
+void changeDirectOut() {  // procedure to switch between direct out and pre amp amplifier
   if (!Amp.HeadPhoneActive) {             // only allow switch if headphones is not active
     if (Amp.DirectOut) {                  // Amp is in direct out state so we have to change to amp active
  #ifdef debugPreAmp                       // if debugPreAmp enabled write message
@@ -465,9 +251,8 @@ void changeDirectOut() {
     }
   }
 }
-///////////////////////////////////////////////////////////////////////////////////////////////////////
-//// display the main setup menu on the screen
-void mainSetupMenu() {
+
+void mainSetupMenu() {  //// display the main setup menu on the screen
   int orgAttenuatorLevel = attenuatorMain;                  // save orginal attenuator level
   bool write = true;                                        // used determine if we need to write volume level to screen
   bool quit = false;                                        // determine if we should quit the loop
@@ -561,9 +346,8 @@ void mainSetupMenu() {
   listContentEEPROM();
  #endif
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// procedure to change the names display for the input channels
-void setupMenuChangeNameInputChan() {
+
+void setupMenuChangeNameInputChan() {  ///  menu procedure to change the names display for the input channels
   const int shortPressTime = 1000;                                          // short time press
   const int longPressTime = 1000;                                           // long time press
   bool write = true;                                                        // used determine if we need to write volume level to screen
@@ -699,9 +483,7 @@ void setupMenuChangeNameInputChan() {
   }
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////
-// change brightness, amp attenuation and start delay
-void setupMenuGeneral() {
+void setupMenuGeneral() { // menu change brightness, amp attenuation and start delay
   const int shortPressTime = 1000;       // short time press
   const int longPressTime = 1000;        // long time press
   bool write = true;                     // used determine if we need to write volume level to screen
@@ -926,9 +708,8 @@ void setupMenuGeneral() {
     isShortDetected = false;  // reset short push detected
   }
 }
-///////////////////////////////////////////////////////////////////////////////////////////////////////////
-//
-void setupMenuInitVol() {
+
+void setupMenuInitVol() {  // menu, set init volume
   const int shortPressTime = 1000;                                 // short time press
   const int longPressTime = 1000;                                  // long time press
   bool write = true;                                               // used determine if we need to write volume level to screen
@@ -1156,9 +937,8 @@ void setupMenuInitVol() {
     }
   }
 }
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//  set balance value using menu
-void setupMenuBalance() {
+
+void setupMenuBalance() {   //  menu set balance value using menu
   int balanceRight;                                                // balance value right channel
   int balanceLeft;                                                 // balance value left channel
   const int longPressTime = 500;                                   // long time press
@@ -1249,9 +1029,8 @@ void setupMenuBalance() {
     }
   }
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// procedure to handle moving to and coming out of standby mode
-void changeStandby() {
+
+void changeStandby() {  // procedure to handle moving to and coming out of standby mode
   if (Amp.Alive) {     // move from alive to standby, turn off screen, relays and amp
  #ifdef debugPreAmp    // if debugPreAmp enabled write message
     Serial.print(F(" changeStandby : moving to standby,  "));
@@ -1283,6 +1062,7 @@ void changeStandby() {
     digitalWrite(ledStandby, LOW);            // turn off standby led to indicate device is powered on
     digitalWrite(powerOnOff, HIGH);           // make pin of standby high, power of amp is turned on
     delay(1000);                              // wait to stabilize
+    Screen.clearDisplay();                    // clear display
     Screen.setPowerSave(0);                   // turn screen on
     waitForXseconds();                        // wait to let amp warm up
     digitalWrite(startDelay, HIGH);           // connect amp to output
@@ -1318,9 +1098,8 @@ void changeStandby() {
  #endif
   }
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Interrupt Service Routine for a change to Rotary Encoder pin A
-void rotaryTurn() {
+
+void rotaryTurn() { // Interrupt Service Routine for a change to Rotary Encoder pin A
   pinAstateCurrent = digitalReadFast(rotaryPinA);    // Lees de huidige staat van Pin A
   pinBstateCurrent = digitalReadFast(rotaryPinB);
   if ((pinAStateLast == LOW) && (pinAstateCurrent == HIGH)) {
@@ -1333,9 +1112,8 @@ void rotaryTurn() {
   }
   pinAStateLast = pinAstateCurrent; 
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Function to change to next inputchannel
-void changeInput(int change) {
+
+void changeInput(int change) {  // Function to change to next inputchannel
  #ifdef debugPreAmp  // if debugPreAmp enabled write message                                                
   Serial.print(F(" changeInput: old selected Input: "));
   Serial.print(Amp.SelectedInput);
@@ -1365,9 +1143,8 @@ void changeInput(int change) {
   Serial.println(Amp.SelectedInput);
  #endif
 }
-//////////////////////////////////////////////////////////////////////////////////////////////
-// Functions to change volume
-void defineVolume(int increment) {
+
+void defineVolume(int increment) {   // Functions to change volume
   int attenuatorLeftOld = attenuatorLeft;    // save old value left channel
   int attenuatorRightOld = attenuatorRight;  // save old value right channel
   volumeChanged = true;                      // assume volume is changed
@@ -1432,9 +1209,8 @@ void defineVolume(int increment) {
  #endif
   }
 }
-//////////////////////////////////////////////////////////////////////////////////////////////
-// Function to change mute
-void changeMute() {
+
+void changeMute() {   // Function to change mute
   if (muteEnabled) {                          // if mute enable we turn mute off
     muteEnabled = false;                      // change value of boolean
     setRelayChannel(Amp.SelectedInput);  // set relays to support original inputchnannel
@@ -1460,9 +1236,8 @@ void changeMute() {
  #endif
   }
 }
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// write stable values on the screen (mute, headphones, passive)
-void writeFixedValuesScreen() {
+
+void writeFixedValuesScreen() {  // write stable values on the screen (mute, headphones, passive)
   Screen.clearDisplay();
   Screen.setFont(fontgrahp);
   if (Amp.HeadPhoneActive) {                    // headphone is active
@@ -1512,22 +1287,21 @@ void writeFixedValuesScreen() {
   }
   Screen.sendBuffer();
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// intialisation of the screen after powerup of screen.
-void oledSchermInit() {
+
+void oledSchermInit() {  // intialisation of the screen after powerup of screen.
   digitalWrite(oledReset, LOW);                                        // set screen in reset mode
-  delay(15);                                                           // wait to stabilize
+  delay(10);                                                           // wait to stabilize
   digitalWrite(oledReset, HIGH);                                       // set screen active
-  delay(15);                                                           // wait to stabilize
+  delay(110);                                                          // wait to stabilize
   Screen.setI2CAddress(oledI2CAddress * 2);                            // set oled I2C address
-  Screen.begin();                                                      // init the screen
+  Screen.initDisplay();                                                // init the screen
   Screen.clearDisplay();
+  Screen.setPowerSave(1);                                                      
   Screen.setContrast((((Amp.ContrastLevel * 2) + 1) << 4) | 0x0f);     // set contrast level, reduce number of options
-  Screen.sendBuffer();
+  Screen.setFlipMode(1);
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// write volume level to screen
-void writeVolumeScreen(int volume) {
+
+void writeVolumeScreen(int volume) {  // write volume level to screen
   int offset = -63;
   if (!Amp.DirectOut) {        // if the amp is not in direct out mode adjust volume displayed on screen
     offset = offset + Amp.PreAmpGain;
@@ -1549,9 +1323,8 @@ void writeVolumeScreen(int volume) {
   }
   Screen.sendBuffer();
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// set relays in status to support requested volume
-void setRelayVolume(int relayLeft, int relayRight) {
+
+void setRelayVolume(int relayLeft, int relayRight) {  // set relays in status to support requested volume
   Wire.beginTransmission(mcp23017I2CAddressBottom);  // write volume left to left ladder
   Wire.write(0x13);
   Wire.write(relayLeft);
@@ -1563,9 +1336,8 @@ void setRelayVolume(int relayLeft, int relayRight) {
     Wire.endTransmission();
   }
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// set relays in status to support requested channnel
-void setRelayChannel(uint8_t relay) {
+
+void setRelayChannel(uint8_t relay) {  // set relays in status to support requested channnel
   uint8_t inverseWord;
   if (relay == 0) {      // if no channel is selected, drop all ports, this is done during  mute
     inverseWord = 0xef;  // we write inverse, bit 4 = 0 as this one is not inverted
@@ -1591,9 +1363,8 @@ void setRelayChannel(uint8_t relay) {
   Serial.println(inverseWord, BIN);
  #endif
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//initialize the MCP23017 controling the relays;
-void mCP23017init(uint8_t mCP23017I2Caddress) {
+
+void mCP23017init(uint8_t mCP23017I2Caddress) {  //initialize the MCP23017 controling the relays;
   Wire.beginTransmission(mCP23017I2Caddress);
   Wire.write(0x00);  // IODIRA register, input port
   Wire.write(0x00);  // set all of port B to output
@@ -1611,9 +1382,8 @@ void mCP23017init(uint8_t mCP23017I2Caddress) {
   Wire.write(0x00);  // set all ports low,
   Wire.endTransmission();
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// detect log time press on remote controle
-bool detectLongPress(uint16_t aLongPressDurationMillis) {
+
+bool detectLongPress(uint16_t aLongPressDurationMillis) {  // detect log time press on remote controle
   if (TinyIRReceiverData.Flags == IRDATA_FLAGS_IS_REPEAT) {        // if repeat and not detected yet
     if (millis() - aLongPressDurationMillis > milliSOfFirstReceive) {  // if this status takes longer as..
       longPressJustDetected = true;                                    // longpress detected
@@ -1625,9 +1395,8 @@ bool detectLongPress(uint16_t aLongPressDurationMillis) {
   }
   return longPressJustDetected;
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// detect if the EEPROM contains an init config
-void checkIfEepromHasInit() {
+
+void checkIfEepromHasInit() {  // detect if the EEPROM contains an init config
   char versionOfData[9] = "PreAmpV3";                            // unique string to check if eeprom already written
   EEPROM.get(0, Amp);                                      // get variables within init out of EEPROM
   for (byte index = 0; index < 8; index++) {                    // loop to compare strings
@@ -1642,9 +1411,8 @@ void checkIfEepromHasInit() {
  #endif
   }
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// write the EEProm with the correct values
-void writeEEprom() {
+
+void writeEEprom() {   // write the EEProm with the correct values
  #ifdef debugPreAmp
   Serial.println(F("WriteEEprom: no init config detected, writing new init config"));
  #endif
@@ -1677,9 +1445,8 @@ void writeEEprom() {
   EEPROM.put(0, start);            // write init data to eeprom
   EEPROM.put(110, VolLevelsInit);  // write volslevel to eeprom
 }
-////////////////////////////////////////////////////////////////////////////////////////////////
-// change format of volume for displaying on screen, 2 chars
-char* chvolInChar2(int volume) {
+
+char* chvolInChar2(int volume) {  // change format of volume for displaying on screen, 2 chars
   if (volume == 0) {
     strcpy(volInChar, " 0");
     return (volInChar);
@@ -1693,9 +1460,8 @@ char* chvolInChar2(int volume) {
     return (volInChar);
   }
 }
-////////////////////////////////////////////////////////////////////////////////////////////////
-// change format of volume for displaying on screen, 3 chars
-char* chvolInChar3(int volume) {
+
+char* chvolInChar3(int volume) {  // change format of volume for displaying on screen, 3 chars
   if (volume == 0) {
     strcpy(volInChar, "  0");
     return (volInChar);
@@ -1718,9 +1484,8 @@ char* chvolInChar3(int volume) {
     }
   }
 }
-////////////////////////////////////////////////////////////////////////////////////////////////
-//  debugPreAmp proc to show content of eeprom
-#ifdef debugPreAmp
+
+#ifdef debugPreAmp  //  debugPreAmp proc to show content of eeprom
  void listContentEEPROM() {
   Serial.print(F("unique string         : "));
   Serial.println(Amp.UniqueString);
@@ -1766,9 +1531,8 @@ char* chvolInChar3(int volume) {
   Serial.println(Amp.InputTekst[4]);
  }
 #endif
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// function to check i2c bus
-#ifdef debugPreAmp
+
+#ifdef debugPreAmp  // function to check i2c bus
  void scanI2CBus() {
   uint8_t error;                                                      // error code
   uint8_t address;                                                    // address to be tested
@@ -1806,3 +1570,177 @@ char* chvolInChar3(int volume) {
   }
  }
 #endif
+
+void setup() {   // Setup
+  // pin modes
+  pinMode(powerOnOff, OUTPUT);             // control the relay that provides power to the rest of the amp
+  pinMode(headphoneOnOff, OUTPUT);         // control the relay that switches headphones on and off
+  pinMode(directOutState, OUTPUT);         // control the relay that switches the preamp between direct out or active
+  pinMode(startDelay, OUTPUT);             // control the relay that connects amp to output ports
+  pinMode(rotaryPinA, INPUT_PULLUP);       // pin A rotary is high and its an input port
+  pinMode(rotaryPinB, INPUT_PULLUP);       // pin B rotary is high and its an input port
+  pinMode(buttonChannel, INPUT_PULLUP);    // button to change channel
+  pinMode(buttonStandby, INPUT_PULLUP);    // button to go into standby/active
+  pinMode(buttonHeadphone, INPUT_PULLUP);  // button to switch between AMP and headphone
+  pinMode(buttonDirectOut, INPUT_PULLUP);  // button to switch between passive and active mode
+  pinMode(buttonMute, INPUT_PULLUP);       // button to mute
+  pinMode(ledStandby, OUTPUT);             // led will be on when device is in standby mode
+  pinMode(oledReset, OUTPUT);              // set reset of oled screen
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // write init state to output pins
+  digitalWrite(powerOnOff, LOW);      // keep amp turned off
+  digitalWrite(headphoneOnOff, LOW);  // turn headphones off
+  digitalWrite(directOutState, LOW);  // turn the preamp in active state
+  digitalWrite(startDelay, LOW);      // disconnect amp from output
+  digitalWrite(ledStandby, LOW);      // turn off standby led to indicate device is becoming active
+  digitalWrite(oledReset, LOW);       // keep the Oled screen in reset mode
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// enable debugPreAmp to write to console if debugPreAmp is enabled
+ #ifdef debugPreAmp
+  Serial.begin(9600);  // if debugPreAmplevel on start monitor screen
+ #endif
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // // read setup values stored within the eeprom
+  checkIfEepromHasInit();      // check if eeprom has config file, otherwise write config
+  EEPROM.get(0, Amp);     // get variables within init out of EEPROM
+  EEPROM.get(110, VolLevels);  // get the array setting volume levels
+ #ifdef debugPreAmp                   // if debugPreAmp enabled write message
+  Serial.println(F("initprog: the following values read from EEPROM"));
+  listContentEEPROM();
+ #endif
+  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // Set up pins for rotary:
+  attachInterrupt(digitalPinToInterrupt(rotaryPinA), rotaryTurn, CHANGE);  // if pin encoderA changes run RotaryTurn
+  button.setDebounceTime(50);                                              // set debounce time to 50 milliseconds
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // startup IR
+  initPCIInterruptForTinyReceiver();  // Start the IR receiver
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // initialize the oled screen and relay extenderdelayPlop
+  Wire.begin();  // start i2c communication
+  delay(100);
+ #ifdef debugPreAmp
+  scanI2CBus();  // in debugPreAmp mode show i2c addresses used
+ #endif
+  oledSchermInit();  // intialize the Oled screen
+  delay(100);
+  mCP23017init(mcp23017I2CAddressBottom);  // initialize the relays
+  if (daughterBoard) {                     // if we have a daughterboard
+    mCP23017init(mcp23017I2CAddressTop);   // initialize daugterboard
+  }
+  setRelayVolume(0, 0);  // set volume relays to 0, just to be sure
+  delay(delayPlop);      // wait to stabilize
+  setRelayChannel(0);    // disconnect all input channels
+  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // set input / volume / etc depending standby active state
+  Amp.Alive=!Amp.Alive; //invert bool so we can use standard standby proc
+  changeStandby();
+ #ifdef debugPreAmp
+  Serial.println(F("setup: end of setup proc"));
+ #endif
+}
+
+void loop() {  // Main loop
+  if (Amp.Alive) {                                              // we only react if we are in alive state, not in standby
+    if (attenuatorChange != 0) {                                // if attenuatorChange is changed by the interupt we change volume/etc
+      defineVolume(attenuatorChange);                           // Calculate correct temp and end volumelevels
+      if (volumeChanged) {                                      // if volume is changed
+        setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  // set relays to the temp level
+        delay(delayPlop);                                       // wait to prevent plop
+        setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
+        writeVolumeScreen(attenuatorMain);                      // display volume level on oled screen
+      }
+      attenuatorChange = 0;  // reset the value to 0
+    }
+    if (digitalRead(buttonMute) == LOW) {  // if button mute is pushed
+      delay(500);                          // wait to prevent multiple switches
+      changeMute();                        // change status of mute
+    }
+    if (digitalRead(buttonChannel) == LOW) {  // if button channel switch is pushed
+      delay(500);                             // wait to prevent multiple switches
+      changeInput(1);                         // change input channel
+    }
+    if (digitalRead(buttonHeadphone) == LOW) {  // if button headphones switch is pushed
+      delay(500);                               // wait to prevent multiple switches
+      changeHeadphone();                        // change to headphone or back
+    }
+    if (digitalRead(buttonDirectOut) == LOW) {  // if button passive switch is pushed
+      delay(500);                               // wait to prevent multiple switches
+      changeDirectOut();                        // change active/passive state
+    }
+    button.loop();
+    if (button.isPressed()) {  // if rotary button is pushed go to setup menu
+      mainSetupMenu();         // start setup menu
+      delay(500);              // wait to prevent multiple switches
+    }
+  }
+  if (digitalRead(buttonStandby) == LOW) {  // if button standby is is pushed
+    delay(500);                             // wait to prevent multiple switches
+    changeStandby();                        // changes status
+  }
+  if (TinyReceiverDecode()) {      // if we receive data on the IR interface
+    if (detectLongPress(1500)) {  // simple function to increase speed of volume change by reducing wait time
+      delayTimer = 0;
+    } 
+    else {
+      delayTimer = 300;
+    }
+    if (TinyIRReceiverData.Address == 0x87EE) {
+      switch (TinyIRReceiverData.Command) {  // read the command field containing the code sent by the remote
+
+        case appleUp:
+          if (Amp.Alive) {        // we only react if we are in alive state, not in standby
+            defineVolume(1);           // calculate correct volume levels, plus 1
+            if (volumeChanged) {
+              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
+              delay(delayPlop);                                       // wait to prevent plop
+              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
+              writeVolumeScreen(attenuatorMain);                      // display volume level on screen
+            }
+            delay(delayTimer);
+          }
+          break;
+        case appleDown:
+          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
+            defineVolume(-1);               // calculate correct volume levels, minus 1
+            if (volumeChanged) {
+              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
+              delay(delayPlop);                                       // wait to prevent plop
+              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
+              writeVolumeScreen(attenuatorMain);                      // display volume level on oled screen
+            }
+            delay(delayTimer);
+          }
+          break;
+        case appleLeft:
+          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
+            changeInput(-1);           // change input channel
+            delay(300);
+          }
+          break;
+        case appleRight:
+          if (Amp.Alive) {            // we only react if we are in alive state, not in standby
+            changeInput(1);           // change input channel
+            delay(300);
+          }
+          break;
+        case appleForward:
+          changeStandby();            // switch status of standby
+          break;
+        case appleMiddle:
+          if (Amp.Alive) {            // we only react if we are in alive state, not in standby
+            changeMute();             // change mute
+            delay(300);
+          }
+          break;
+        case appleMenu:
+          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
+            changeDirectOut();         // switch between direct out and via preamp
+            delay(300);
+          }
+          break;
+      }
+      TinyReceiverDecode();  // clear buffer to drop any reads from ir to be excecuted received during excuting of code due to previous command
+    }
+  }
+}
