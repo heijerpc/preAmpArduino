@@ -38,11 +38,11 @@
 // v1.2  adapted to platformio 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
-//#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
+#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
-const char* topTekst = "PeWalt, V 1.2";            // current version of the code, shown in startscreen top, content could be changed
+const char* topTekst = "PeWalt, V 1.3";            // current version of the code, shown in startscreen top, content could be changed
 const char* middleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
 const char* bottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
 // definitions for EPROM writing
@@ -1486,7 +1486,7 @@ char* chvolInChar3(int volume) {  // change format of volume for displaying on s
 }
 
 #ifdef debugPreAmp  //  debugPreAmp proc to show content of eeprom
- void listContentEEPROM() {
+void listContentEEPROM() {
   Serial.print(F("unique string         : "));
   Serial.println(Amp.UniqueString);
   Serial.print(F("volume per channel    : "));
