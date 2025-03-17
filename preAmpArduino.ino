@@ -36,9 +36,10 @@
 //       changed ir lib to tiny receiver due to issues with timing in new version of lib
 //       fixed isue with nvram loosing due to power failures, fuse value adapted in IDE
 // v1.2  adapted to platformio 
+// v1.3  bugfixes
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
-#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
+//#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
@@ -1653,20 +1654,20 @@ void loop() {  // Main loop
       attenuatorChange = 0;  // reset the value to 0
     }
     if (digitalRead(buttonMute) == LOW) {  // if button mute is pushed
-      delay(500);                          // wait to prevent multiple switches
       changeMute();                        // change status of mute
+      delay(500);                          // wait to prevent multiple switches
     }
     if (digitalRead(buttonChannel) == LOW) {  // if button channel switch is pushed
-      delay(500);                             // wait to prevent multiple switches
       changeInput(1);                         // change input channel
+      delay(500);                             // wait to prevent multiple switches
     }
     if (digitalRead(buttonHeadphone) == LOW) {  // if button headphones switch is pushed
-      delay(500);                               // wait to prevent multiple switches
       changeHeadphone();                        // change to headphone or back
+      delay(500);                               // wait to prevent multiple switches
     }
     if (digitalRead(buttonDirectOut) == LOW) {  // if button passive switch is pushed
-      delay(500);                               // wait to prevent multiple switches
       changeDirectOut();                        // change active/passive state
+      delay(500);                               // wait to prevent multiple switches
     }
     button.loop();
     if (button.isPressed()) {  // if rotary button is pushed go to setup menu
@@ -1675,8 +1676,8 @@ void loop() {  // Main loop
     }
   }
   if (digitalRead(buttonStandby) == LOW) {  // if button standby is is pushed
-    delay(500);                             // wait to prevent multiple switches
     changeStandby();                        // changes status
+    delay(500);                             // wait to prevent multiple switches
   }
   if (TinyReceiverDecode()) {      // if we receive data on the IR interface
     if (detectLongPress(1500)) {  // simple function to increase speed of volume change by reducing wait time
