@@ -37,13 +37,14 @@
 //       fixed isue with nvram loosing due to power failures, fuse value adapted in IDE
 // v1.2  adapted to platformio 
 // v1.3  bugfixes
+// v1.4  small fixes
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
 //#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
-const char* topTekst = "PeWalt, V 1.3";            // current version of the code, shown in startscreen top, content could be changed
+const char* topTekst = "PeWalt, V 1.4";            // current version of the code, shown in startscreen top, content could be changed
 const char* middleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
 const char* bottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
 // definitions for EPROM writing
@@ -126,7 +127,7 @@ bool volumeChanged = false;               // defines if volume is changed
 #include <Wire.h>                          // include functions for i2c
 #include <ezButton.h>                      // include functions for debounce
 ezButton button(rotaryButton);             // create ezButton object  attached to the rotary button;
-#include <digitalWriteFast.h>              // include fast read used within interrupt routine
+//#include <digitalWriteFast.h>              // include fast read used within interrupt routine
 
 void waitForXseconds() { // delay the startup to wait for pre amp to stabilize, clears screen at start and end of proc
  #ifdef debugPreAmp                           // if debugPreAmp enabled write message
@@ -1382,7 +1383,7 @@ void mCP23017init(uint8_t mCP23017I2Caddress) {  //initialize the MCP23017 contr
   Wire.write(0x13);  // gpioB
   Wire.write(0x00);  // set all ports low,
   Wire.endTransmission();
-}
+} 
 
 bool detectLongPress(uint16_t aLongPressDurationMillis) {  // detect log time press on remote controle
   if (TinyIRReceiverData.Flags == IRDATA_FLAGS_IS_REPEAT) {        // if repeat and not detected yet

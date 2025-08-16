@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../../git/preAmpArduino"
+		},
+		{
+			"name": "preAmp",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}
