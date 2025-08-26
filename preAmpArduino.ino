@@ -36,13 +36,15 @@
 //       changed ir lib to tiny receiver due to issues with timing in new version of lib
 //       fixed isue with nvram loosing due to power failures, fuse value adapted in IDE
 // v1.2  adapted to platformio 
+// v1.3  bugfixes
+// v1.4  small fixes, change ir setup to allign with tiny receiver
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
 //#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
-const char* topTekst = "PeWalt, V 1.2";            // current version of the code, shown in startscreen top, content could be changed
+const char* topTekst = "ACP+ V 1.4";                // current version of the code, shown in startscreen top, content could be changed
 const char* middleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
 const char* bottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
 // definitions for EPROM writing
@@ -73,17 +75,17 @@ volatile int rotaryPinA = 3;  // encoder pin A, volatile as its addressed within
 volatile int rotaryPinB = 4;  // encoder pin B,
 #define rotaryButton 5        // pin is connected to the switch part of the rotary
 #define buttonChannel 6       // pin is conncected to the button to change input channel round robin, pullup
-#define buttonStandby 7       // pin is connected to the button to change standby on/off, pullup
+#define buttonStandby 7      // pin is connected to the button to change standby on/off, pullup
 #define buttonHeadphone 8     // pin  is connected to the button to change headphone on/off, pullup
-#define buttonDirectOut 9     // pin  is connected to the button to switch between direct out or amp, pullup
+#define buttonDirectOut7 9     // pin  is connected to the button to switch between direct out or amp, pullup
 #define buttonMute 10         // pin  is connected to the button to change mute on/off, pullup
 #define ledStandby 11         // connected to a led that is on if amp is in standby mode
 #define oledReset 12          // connected to the reset port of Oled screen, used to reset Oled screen
 // definitons for the IR receiver
-#define DECODE_NEC        // only add NEC protocol to support apple remote, saves memory, fixed keyword
-#define USE_EXTENDED_NEC_PROTOCOL // Like NEC, but take the 16 bit address as one 16 bit value and not as 8 bit normal and 8 bit inverted value.
 #define IR_RECEIVE_PIN 2  // defines the ir receive pin within the lib
-#define DISABLE_PARITY_CHECKS 
+#define DISABLE_PARITY_CHECKS // disable parity check, no clue if this is wise
+#define USE_EXTENDED_NEC_PROTOCOL // Like NEC, but take the 16 bit address as one 16 bit value and not as 8 bit normal and 8 bit inverted value.
+#define USE_CALLBACK_FOR_TINY_RECEIVER // use the additonal proc to read data from IR 
 #include "TinyIRReceiver.hpp" // include IR receiver
 #define appleLeft 9       // below the IR codes received for apple
 #define appleRight 6
@@ -92,6 +94,9 @@ volatile int rotaryPinB = 4;  // encoder pin B,
 #define appleMiddle 92
 #define appleMenu 3
 #define appleForward 95
+uint8_t InfraremoteCommand;           // contains the command received from IR controller
+bool receiveIrCommand = false;        // defines if an IR command is received
+bool isRepeat = false;                 // defines if IR command is repeat
 int delayTimer;                       // timer to delay between volume changes using IR, actual value set in main loop
 unsigned long milliSOfFirstReceive;   // used within IR procedures to determine if command is a repeat
 bool longPressJustDetected;           // used within IR procedures to determine if command is a repeat
@@ -125,7 +130,20 @@ bool volumeChanged = false;               // defines if volume is changed
 #include <Wire.h>                          // include functions for i2c
 #include <ezButton.h>                      // include functions for debounce
 ezButton button(rotaryButton);             // create ezButton object  attached to the rotary button;
-#include <digitalWriteFast.h>              // include fast read used within interrupt routine
+
+
+// This function is called when a complete IR command is received
+void handleReceivedTinyIRData() {
+  // save the data if it is from correct IR receiver
+  if (TinyIRReceiverData.Address == 0x87EE) {              // if its an Apple IR transmitter
+    InfraremoteCommand = TinyIRReceiverData.Command;      // save command
+    isRepeat = TinyIRReceiverData.Flags;
+    receiveIrCommand = true;             // set boolan an command is received
+  }
+  #ifdef debugPreAmp                     // if debugPreAmp enabled write message
+    printTinyReceiverResultMinimal(&Serial);
+  #endif
+}
 
 void waitForXseconds() { // delay the startup to wait for pre amp to stabilize, clears screen at start and end of proc
  #ifdef debugPreAmp                           // if debugPreAmp enabled write message
@@ -1381,10 +1399,10 @@ void mCP23017init(uint8_t mCP23017I2Caddress) {  //initialize the MCP23017 contr
   Wire.write(0x13);  // gpioB
   Wire.write(0x00);  // set all ports low,
   Wire.endTransmission();
-}
+} 
 
 bool detectLongPress(uint16_t aLongPressDurationMillis) {  // detect log time press on remote controle
-  if (TinyIRReceiverData.Flags == IRDATA_FLAGS_IS_REPEAT) {        // if repeat and not detected yet
+  if (isRepeat) {                                          // if repeat and not detected yet
     if (millis() - aLongPressDurationMillis > milliSOfFirstReceive) {  // if this status takes longer as..
       longPressJustDetected = true;                                    // longpress detected
     }
@@ -1486,7 +1504,7 @@ char* chvolInChar3(int volume) {  // change format of volume for displaying on s
 }
 
 #ifdef debugPreAmp  //  debugPreAmp proc to show content of eeprom
- void listContentEEPROM() {
+void listContentEEPROM() {
   Serial.print(F("unique string         : "));
   Serial.println(Amp.UniqueString);
   Serial.print(F("volume per channel    : "));
@@ -1571,6 +1589,8 @@ char* chvolInChar3(int volume) {  // change format of volume for displaying on s
  }
 #endif
 
+
+
 void setup() {   // Setup
   // pin modes
   pinMode(powerOnOff, OUTPUT);             // control the relay that provides power to the rest of the amp
@@ -1653,20 +1673,20 @@ void loop() {  // Main loop
       attenuatorChange = 0;  // reset the value to 0
     }
     if (digitalRead(buttonMute) == LOW) {  // if button mute is pushed
-      delay(500);                          // wait to prevent multiple switches
       changeMute();                        // change status of mute
+      delay(500);                          // wait to prevent multiple switches
     }
     if (digitalRead(buttonChannel) == LOW) {  // if button channel switch is pushed
-      delay(500);                             // wait to prevent multiple switches
       changeInput(1);                         // change input channel
+      delay(500);                             // wait to prevent multiple switches
     }
     if (digitalRead(buttonHeadphone) == LOW) {  // if button headphones switch is pushed
-      delay(500);                               // wait to prevent multiple switches
       changeHeadphone();                        // change to headphone or back
+      delay(500);                               // wait to prevent multiple switches
     }
     if (digitalRead(buttonDirectOut) == LOW) {  // if button passive switch is pushed
-      delay(500);                               // wait to prevent multiple switches
       changeDirectOut();                        // change active/passive state
+      delay(500);                               // wait to prevent multiple switches
     }
     button.loop();
     if (button.isPressed()) {  // if rotary button is pushed go to setup menu
@@ -1675,72 +1695,69 @@ void loop() {  // Main loop
     }
   }
   if (digitalRead(buttonStandby) == LOW) {  // if button standby is is pushed
-    delay(500);                             // wait to prevent multiple switches
     changeStandby();                        // changes status
+    delay(500);                             // wait to prevent multiple switches
   }
-  if (TinyReceiverDecode()) {      // if we receive data on the IR interface
-    if (detectLongPress(1500)) {  // simple function to increase speed of volume change by reducing wait time
+  if (receiveIrCommand) {                 // if we receive data on the IR interface
+    if (detectLongPress(1500)) {           // simple function to increase speed of volume change by reducing wait time
       delayTimer = 0;
     } 
     else {
       delayTimer = 300;
     }
-    if (TinyIRReceiverData.Address == 0x87EE) {
-      switch (TinyIRReceiverData.Command) {  // read the command field containing the code sent by the remote
-
-        case appleUp:
-          if (Amp.Alive) {        // we only react if we are in alive state, not in standby
-            defineVolume(1);           // calculate correct volume levels, plus 1
-            if (volumeChanged) {
-              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
-              delay(delayPlop);                                       // wait to prevent plop
-              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
-              writeVolumeScreen(attenuatorMain);                      // display volume level on screen
-            }
-            delay(delayTimer);
+    switch (InfraremoteCommand) {         // read the command field containing the code sent by the remote
+      case appleUp:
+        if (Amp.Alive) {                  // we only react if we are in alive state, not in standby
+          defineVolume(1);                // calculate correct volume levels, plus 1
+          if (volumeChanged) {
+            setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
+            delay(delayPlop);                                       // wait to prevent plop
+            setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
+            writeVolumeScreen(attenuatorMain);                      // display volume level on screen
           }
-          break;
-        case appleDown:
-          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
-            defineVolume(-1);               // calculate correct volume levels, minus 1
-            if (volumeChanged) {
-              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
-              delay(delayPlop);                                       // wait to prevent plop
-              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
-              writeVolumeScreen(attenuatorMain);                      // display volume level on oled screen
-            }
-            delay(delayTimer);
+          delay(delayTimer);
+        }
+        break;
+      case appleDown:
+        if (Amp.Alive) {             // we only react if we are in alive state, not in standby
+          defineVolume(-1);               // calculate correct volume levels, minus 1
+          if (volumeChanged) {
+            setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
+            delay(delayPlop);                                       // wait to prevent plop
+            setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
+            writeVolumeScreen(attenuatorMain);                      // display volume level on oled screen
           }
-          break;
-        case appleLeft:
-          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
-            changeInput(-1);           // change input channel
-            delay(300);
-          }
-          break;
-        case appleRight:
-          if (Amp.Alive) {            // we only react if we are in alive state, not in standby
-            changeInput(1);           // change input channel
-            delay(300);
-          }
-          break;
-        case appleForward:
-          changeStandby();            // switch status of standby
-          break;
-        case appleMiddle:
-          if (Amp.Alive) {            // we only react if we are in alive state, not in standby
-            changeMute();             // change mute
-            delay(300);
-          }
-          break;
-        case appleMenu:
-          if (Amp.Alive) {             // we only react if we are in alive state, not in standby
-            changeDirectOut();         // switch between direct out and via preamp
-            delay(300);
-          }
-          break;
-      }
-      TinyReceiverDecode();  // clear buffer to drop any reads from ir to be excecuted received during excuting of code due to previous command
-    }
+          delay(delayTimer);
+        }
+        break;
+      case appleLeft:
+        if (Amp.Alive) {             // we only react if we are in alive state, not in standby
+          changeInput(-1);           // change input channel
+          delay(300);
+        }
+        break;
+      case appleRight:
+        if (Amp.Alive) {            // we only react if we are in alive state, not in standby
+          changeInput(1);           // change input channel
+          delay(300);
+        }
+        break;
+      case appleForward:
+        changeStandby();            // switch status of standby
+        break;
+      case appleMiddle:
+        if (Amp.Alive) {            // we only react if we are in alive state, not in standby
+          changeMute();             // change mute
+          delay(300);
+        }
+        break;
+      case appleMenu:
+        if (Amp.Alive) {             // we only react if we are in alive state, not in standby
+          changeDirectOut();         // switch between direct out and via preamp
+          delay(300);
+        }
+        break;
+    } 
+    receiveIrCommand = false;     
   }
 }
