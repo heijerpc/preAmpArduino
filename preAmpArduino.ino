@@ -38,13 +38,14 @@
 // v1.2  adapted to platformio 
 // v1.3  bugfixes
 // v1.4  small fixes, change ir setup to allign with tiny receiver
+// v1.5  changed handling of input buttons
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
 //#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
-const char* topTekst = "ACP+ V 1.4";                // current version of the code, shown in startscreen top, content could be changed
+const char* topTekst = "ACP+ V 1.5";                // current version of the code, shown in startscreen top, content could be changed
 const char* middleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
 const char* bottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
 // definitions for EPROM writing
@@ -75,9 +76,9 @@ volatile int rotaryPinA = 3;  // encoder pin A, volatile as its addressed within
 volatile int rotaryPinB = 4;  // encoder pin B,
 #define rotaryButton 5        // pin is connected to the switch part of the rotary
 #define buttonChannel 6       // pin is conncected to the button to change input channel round robin, pullup
-#define buttonStandby 7      // pin is connected to the button to change standby on/off, pullup
-#define buttonHeadphone 8     // pin  is connected to the button to change headphone on/off, pullup
-#define buttonDirectOut7 9     // pin  is connected to the button to switch between direct out or amp, pullup
+#define buttonStandby 8      // pin is connected to the button to change standby on/off, pullup
+#define buttonHeadphone 7     // pin  is connected to the button to change headphone on/off, pullup
+#define buttonDirectOut 9     // pin  is connected to the button to switch between direct out or amp, pullup
 #define buttonMute 10         // pin  is connected to the button to change mute on/off, pullup
 #define ledStandby 11         // connected to a led that is on if amp is in standby mode
 #define oledReset 12          // connected to the reset port of Oled screen, used to reset Oled screen
@@ -1589,7 +1590,17 @@ void listContentEEPROM() {
  }
 #endif
 
-
+bool buttonPressed(uint8_t pinNumber) {
+  bool buttonIsPressed = true;
+  delay(20);
+  for (int i = 5; i > 0; i--) {
+    if (digitalRead(pinNumber) != LOW) {
+      buttonIsPressed = false;
+    }
+    delay(10);
+  }
+  return buttonIsPressed;
+}
 
 void setup() {   // Setup
   // pin modes
@@ -1672,21 +1683,29 @@ void loop() {  // Main loop
       }
       attenuatorChange = 0;  // reset the value to 0
     }
-    if (digitalRead(buttonMute) == LOW) {  // if button mute is pushed
-      changeMute();                        // change status of mute
-      delay(500);                          // wait to prevent multiple switches
+    if (digitalRead(buttonMute) == LOW) {    // if button mute is pushed
+      if (buttonPressed(buttonMute)) {       // detect if we have a real press or noise
+        changeMute();                        // change status of mute
+        delay(500);                          // wait to prevent multiple switches
+      }   
     }
     if (digitalRead(buttonChannel) == LOW) {  // if button channel switch is pushed
-      changeInput(1);                         // change input channel
-      delay(500);                             // wait to prevent multiple switches
+      if (buttonPressed(buttonChannel)) {     // detect if we have a real press or noise
+        changeInput(1);                       // change input channel
+        delay(500);                           // wait to prevent multiple switches
+      }                              
     }
     if (digitalRead(buttonHeadphone) == LOW) {  // if button headphones switch is pushed
-      changeHeadphone();                        // change to headphone or back
-      delay(500);                               // wait to prevent multiple switches
+      if (buttonPressed(buttonHeadphone)) {     // detect if we have a real press or noise
+        changeHeadphone();                      // change to headphone or back
+        delay(500);                             // wait to prevent multiple switches
+      }
     }
     if (digitalRead(buttonDirectOut) == LOW) {  // if button passive switch is pushed
-      changeDirectOut();                        // change active/passive state
-      delay(500);                               // wait to prevent multiple switches
+      if (buttonPressed(buttonDirectOut)) {     // detect if we have a real press or noise
+        changeDirectOut();                      // change active/passive state
+        delay(500);                             // wait to prevent multiple switches
+      }
     }
     button.loop();
     if (button.isPressed()) {  // if rotary button is pushed go to setup menu
@@ -1695,8 +1714,10 @@ void loop() {  // Main loop
     }
   }
   if (digitalRead(buttonStandby) == LOW) {  // if button standby is is pushed
-    changeStandby();                        // changes status
-    delay(500);                             // wait to prevent multiple switches
+    if (buttonPressed(buttonStandby)) {
+      changeStandby();                        // changes status
+      delay(500);
+    }
   }
   if (receiveIrCommand) {                 // if we receive data on the IR interface
     if (detectLongPress(1500)) {           // simple function to increase speed of volume change by reducing wait time
