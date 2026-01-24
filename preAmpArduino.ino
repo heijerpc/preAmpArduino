@@ -38,14 +38,15 @@
 // v1.2  adapted to platformio 
 // v1.3  bugfixes
 // v1.4  small fixes, change ir setup to allign with tiny receiver
-// v1.5  changed handling of input buttons
+// v1.5  changed handling of input button 
+// v1.6  changed menu for channel names and added ir support for balance
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // below definitions could be change by user depending on setup, no code changes needed
 //#define debugPreAmp                               // Comment this line when debugPreAmp mode is not needed
 const bool daughterBoard = true;                    // boolean, defines if a daughterboard is used to support XLR and balance, either true or false
 const uint8_t inputPortType = 0b00000011;           // define port config, 1 is XLR, 0 is RCA. Only used when daughterboard is true, LSB is input 1
 #define delayPlop 20                                // delay timer between volume changes preventing plop, 20 mS for drv777
-const char* topTekst = "ACP+ V 1.5";                // current version of the code, shown in startscreen top, content could be changed
+const char* topTekst = "ACP+ V 1.6";                // current version of the code, shown in startscreen top, content could be changed
 const char* middleTekst = "          please wait";  //as an example const char* MiddleTekst = "Cristian, please wait";
 const char* bottemTekst = " " ;                     //as an example const char* BottemTekst = "design by: Walter Widmer" ;
 // definitions for EPROM writing
@@ -62,10 +63,11 @@ struct SavedData {         // definition of the data stored in eeprom
   bool DirectOut;          // boolean, preamp is used passive or active mode
   bool PrevStatusDirectOut;// boolean, status of previous status of direct out, used when using headphones
   bool Alive;              // boolean, defines if amp is active of standby modes
-  char InputTekst[5][15];  // description of input channels
+  char InputChannelTechName[5][15];  // description of input channels
+  char InputChannelFriendlyName[5][15];  // description of input channels, content could be changed via menu
 };
-SavedData Amp;             // Amp is a structure defined by SavedData containing the values
-int VolLevels[5];          // Vollevels is an array storing initial volume level when switching to channel, used if VolPerChannel is true
+SavedData Amp;                // Amp is a structure defined by SavedData containing the values
+int VolLevels[5];             // Vollevels is an array storing initial volume level when switching to channel, used if VolPerChannel is true
 // pin definitions
 #define powerOnOff A0         // pin connected to the relay handeling power on/off of the amp
 #define headphoneOnOff A1     // pin connected to the relay handeling headphones active / not active
@@ -76,7 +78,7 @@ volatile int rotaryPinA = 3;  // encoder pin A, volatile as its addressed within
 volatile int rotaryPinB = 4;  // encoder pin B,
 #define rotaryButton 5        // pin is connected to the switch part of the rotary
 #define buttonChannel 6       // pin is conncected to the button to change input channel round robin, pullup
-#define buttonStandby 8      // pin is connected to the button to change standby on/off, pullup
+#define buttonStandby 8       // pin is connected to the button to change standby on/off, pullup
 #define buttonHeadphone 7     // pin  is connected to the button to change headphone on/off, pullup
 #define buttonDirectOut 9     // pin  is connected to the button to switch between direct out or amp, pullup
 #define buttonMute 10         // pin  is connected to the button to change mute on/off, pullup
@@ -366,7 +368,7 @@ void mainSetupMenu() {  //// display the main setup menu on the screen
  #endif
 }
 
-void setupMenuChangeNameInputChan() {  ///  menu procedure to change the names display for the input channels
+void setupMenuChangeNameInputChan() {
   const int shortPressTime = 1000;                                          // short time press
   const int longPressTime = 1000;                                           // long time press
   bool write = true;                                                        // used determine if we need to write volume level to screen
@@ -374,33 +376,38 @@ void setupMenuChangeNameInputChan() {  ///  menu procedure to change the names d
   bool isPressing = false;                                                  // defines if button is pressed
   bool isLongDetected = false;                                              // defines if button is pressed long
   bool isShortDetected = false;                                             // defines if button is pressed short
-  int inputChan = 1;                                                        // inputchannel
   int selectedChar = 0;                                                     // char to be changed
   int curCharPos = -1;                                                      // char position within CharsAvailable
   unsigned long int idlePeriod = 30000;                                     // idlePeriod you need to change something within menu otherwise quit menu
   unsigned long timeSaved;                                                  // used to help determine idle time
   unsigned long pressedTime = 0;                                            // used for detecting pressed time
   unsigned long releasedTime = 0;                                           // used for detecting pressen time
-  char charsAvailable[40] = { "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 -:" };  // list of chars available for name input channel
-  Screen.clearBuffer();
-  Screen.setFont(fontH10);
-  Screen.setCursor(5, 10);
-  Screen.print(F("Input channel name"));                                    // print header
-  Screen.setFont(fontH08fixed);
-  for (int i = 1; i < 5; i++) {                                             // print current names of channels
-    Screen.setCursor(0, (20 + (i * 10)));
-    Screen.print(Amp.InputTekst[i]);
-  }
-  Screen.sendBuffer();                                                      // send content to screen
-  button.loop();                                                            
+  char charsAvailable[66] = {"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 -:"};  // list of chars available for name input channel
   timeSaved = millis();
-  while (!quit) {                              // loop through the different channel names
+  int inputChannel = 1;                                      
+  while ( inputChannel < 5) {                                               // run through the different channels
+    if (!quit) {
+      Screen.clearBuffer();
+      Screen.setFont(fontH10);    
+      Screen.setCursor(2, 10);
+      Screen.print(F("Input channel name"));
+      Screen.setFont(fontH08fixed);     
+      Screen.setCursor(0, 30);
+      Screen.print(F("Input : "));
+      Screen.print(Amp.InputChannelTechName[inputChannel]);
+      Screen.setCursor(0, 40);
+      Screen.print(F("Name  : "));
+      Screen.print(Amp.InputChannelFriendlyName[inputChannel]);
+      Screen.setCursor(0, 63);
+      Screen.print(Amp.InputChannelFriendlyName[inputChannel]); // write inputchannel
+    }
+    button.loop();                                                            
     if (millis() > timeSaved + idlePeriod) {   // verify if still somebody doing something
       quit = true;
       break;
     }
     selectedChar = 0;                          // select the first char of the channel name
-    while ((!quit) && (!isLongDetected)) {     // loop through name of channel
+    while ((!quit) && (!isLongDetected)) {     // changes input channel name
       if (millis() > timeSaved + idlePeriod) { // verify if still somebody doing something
         quit = true;
         break;
@@ -409,26 +416,22 @@ void setupMenuChangeNameInputChan() {  ///  menu procedure to change the names d
       while ((!isShortDetected) && (!quit) && (!isLongDetected)) {  // loop to change a char
         if (millis() > timeSaved + idlePeriod) {                    // verify if still somebody doing something
           quit = true;
-          break;
         }
-        if (write) {  // if char is changed write char
+        if (write) {  // if char is changed write char 
           char buf[2];
-          sprintf(buf, "%c", Amp.InputTekst[inputChan][selectedChar]);  // change first char
-          strcpy(volInChar, buf);
-          Screen.setDrawColor(0);  // clean letter part in buffer
-          Screen.drawBox(99, 44, 16, 16);
-          Screen.setDrawColor(1);
-          Screen.setFont(fontH10);
-          Screen.setCursor(100, 54);
-          Screen.print(volInChar);  // write letter
+          sprintf(buf, "%c", Amp.InputChannelFriendlyName[inputChannel][selectedChar]);  // change  char
           Screen.setDrawColor(0);   // clean channel name part in buffer
-          Screen.drawBox((5 * selectedChar), (10 + (inputChan * 10)), 6, 11);
+          Screen.drawBox((40 + (5 * selectedChar)), 30, 6, 11);
+          Screen.drawBox(0, 43, 128, 21);
           Screen.setDrawColor(1);
           Screen.setFont(fontH08fixed);
-          Screen.drawButtonUTF8((5 * selectedChar), (20 + (inputChan * 10)), U8G2_BTN_INV, 0, 0, 0, volInChar);  // write char inverse
+          Screen.drawButtonUTF8((40 + (5 * selectedChar)), 40, U8G2_BTN_INV, 0, 0, 0, buf);  // write char inverse
+          Screen.setFont(fontH14);  
+          Screen.setCursor(0, 63);
+          Screen.print(Amp.InputChannelFriendlyName[inputChannel]); // write inputchannel
           Screen.sendBuffer();
-          for (int charPos = 0; charPos < 38; charPos++) {  // detect which pos is of current char in charoptions
-            if (Amp.InputTekst[inputChan][selectedChar] == charsAvailable[charPos]) {
+          for (int charPos = 0; charPos < 65; charPos++) {  // detect which pos is of current char in charoptions
+            if (Amp.InputChannelFriendlyName[inputChannel][selectedChar] == charsAvailable[charPos]) {
               curCharPos = charPos;
               break;
             }
@@ -439,13 +442,13 @@ void setupMenuChangeNameInputChan() {  ///  menu procedure to change the names d
           write = true;                                // something will change so we need to write
           curCharPos = curCharPos + attenuatorChange;  // change attenuatorLeft init
           attenuatorChange = 0;                        // reset attenuatorChange
-          if (curCharPos > 38) {                       // code to keep curcharpos between 0 and 38
+          if (curCharPos > 64) {                       // code to keep curcharpos between 0 and 38
             curCharPos = 0;
           }
           if (curCharPos < 0) {
-            curCharPos = 38;
+            curCharPos = 64;
           }
-          Amp.InputTekst[inputChan][selectedChar] = charsAvailable[curCharPos];  // change the char to the new char
+          Amp.InputChannelFriendlyName[inputChannel][selectedChar] = charsAvailable[curCharPos];  // change the char to the new char
           timeSaved = millis();
         }
         button.loop();
@@ -466,14 +469,19 @@ void setupMenuChangeNameInputChan() {  ///  menu procedure to change the names d
         }
       }
       Screen.setDrawColor(0);  // clean channel name  part in buffer
-      Screen.drawBox(0, (10 + (inputChan * 10)), 128, 12);
+      Screen.drawBox(0, 30, 128, 33);
       Screen.setDrawColor(1);
-      Screen.setCursor(0, (20 + (inputChan * 10)));
-      Screen.print(Amp.InputTekst[inputChan]);
-      Screen.sendBuffer();
+      Screen.setCursor(0, 40);
+      Screen.setFont(fontH08fixed);
+      Screen.print(F("Name  : "));
+      Screen.print(Amp.InputChannelFriendlyName[inputChannel]);
+      Screen.setFont(fontH14);
+      Screen.setCursor(0, 63);
+      Screen.print(Amp.InputChannelFriendlyName[inputChannel]); // write inputchannel
       isShortDetected = false;
       selectedChar++;
-      if (selectedChar > 10) selectedChar = 0;  // only allow chars within specific range to be changed.
+      timeSaved = millis();
+      if (selectedChar > 13) selectedChar = 0;  // only allow chars within specific range to be changed.
       button.loop();
       if (button.isPressed()) {
         pressedTime = millis();
@@ -496,8 +504,7 @@ void setupMenuChangeNameInputChan() {  ///  menu procedure to change the names d
     isLongDetected = false;
     isPressing = false;
     selectedChar = 0;
-    inputChan++;
-    if (inputChan > 4) quit = true;
+    inputChannel++;
     timeSaved = millis();
   }
 }
@@ -767,7 +774,7 @@ void setupMenuInitVol() {  // menu, set init volume
           Screen.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, "YES");  // write yes in a box
           for (int i = 1; i < 5; i++) {                                // write the port description and the current levels
             Screen.setCursor(0, (20 + (i * 10)));
-            Screen.print(Amp.InputTekst[i]);
+            Screen.print(Amp.InputChannelTechName[i]);
             Screen.setCursor(110, (20 + (i * 10)));
             Screen.print(chvolInChar3(VolLevels[i] + offset));
           }
@@ -776,7 +783,7 @@ void setupMenuInitVol() {  // menu, set init volume
           Screen.setCursor(110, 24);
           Screen.drawButtonUTF8(110, 20, U8G2_BTN_BW1, 0, 1, 1, " NO");  // write no in a box
           Screen.setCursor(0, 31);                                       // write general description and the current level
-          Screen.print(Amp.InputTekst[0]);
+          Screen.print(Amp.InputChannelTechName[0]);
           Screen.setCursor(110, 31);
           Screen.print(chvolInChar3(VolLevels[0] + offset));
         }
@@ -961,12 +968,14 @@ void setupMenuBalance() {   //  menu set balance value using menu
   int balanceRight;                                                // balance value right channel
   int balanceLeft;                                                 // balance value left channel
   const int longPressTime = 500;                                   // long time press
+  bool changed = false;                                            // defines if balance is changed
   bool write = true;                                               // used determine if we need to write volume level to screen
   bool quit = false;                                               // determine if we should quit the loop
   bool isPressing = false;                                         // defines if button is pressed
   bool isLongDetected = false;                                     // defines if button is pressed long
   int offset = -63;                                                // offset to define vol level shown on screen
-  unsigned long int idlePeriod = 30000;                            // idlePeriod you need to change something within menu otherwise quit menu
+  int oldBalanceOffset;                                            // old balance offset, used to clean screen
+  unsigned long int idlePeriod = 500000;                           // idlePeriod you need to change something within menu otherwise quit menu
   unsigned long timeSaved;                                         // used to help determine idle time
   unsigned long pressedTime = 0;                                   // time button is pressed
   button.loop();                                                   // reset status of button
@@ -1010,13 +1019,53 @@ void setupMenuBalance() {   //  menu set balance value using menu
       }
       write = false;
       if (attenuatorChange != 0) {  // if attenuatorChange is changed using rotary
-        write = true;               // balance is changed
-        Screen.setFont(fontH10);
-        Screen.setDrawColor(0);     // clean balance pointer in part in buffer
-        Screen.drawBox((63 + (Amp.BalanceOffset * 4)), 39, 9, 8);
-        Screen.setDrawColor(1);
+        changed = true;               // balance is changed
+      }
+      if (receiveIrCommand) {                 // if we receive data on the IR interface
+        if (detectLongPress(1500)) {           // simple function to increase speed of volume change by reducing wait time
+          delayTimer = 0;
+        } 
+        else {
+         delayTimer = 300;
+        }
+        switch (InfraremoteCommand) { 
+          case appleUp:
+            defineVolume(1);                // calculate correct volume levels, plus 1
+            if (volumeChanged) {
+              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
+              delay(delayPlop);                                       // wait to prevent plop
+              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
+            }
+            delay(delayTimer);
+            break;
+          case appleDown:
+            defineVolume(-1);               // calculate correct volume levels, minus 1
+            if (volumeChanged) {
+              setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);  //  set relays to the temp  level
+              delay(delayPlop);                                       // wait to prevent plop
+              setRelayVolume(attenuatorLeft, attenuatorRight);        // set relay to the correct level
+            }
+            delay(delayTimer);
+            break;
+          case appleLeft:
+            attenuatorChange = -1;
+            changed = true;
+            delay(300);
+            break;
+          case appleRight:
+            attenuatorChange = 1;
+            changed = true;
+            delay(300);
+            break;
+        }
+        receiveIrCommand = false; 
+      }
+      if (changed) {     
+        oldBalanceOffset =  Amp.BalanceOffset; 
         Amp.BalanceOffset = Amp.BalanceOffset + attenuatorChange;        // calculate new balance offset
         attenuatorChange = 0;                                            // reset value
+        write = true; 
+        changed = false;                                                   
         if (Amp.BalanceOffset > 14) {                                    // keep value between 10 and -10
           Amp.BalanceOffset = 14;
           write = false;  // value was already 14, no use to write
@@ -1025,6 +1074,12 @@ void setupMenuBalance() {   //  menu set balance value using menu
           Amp.BalanceOffset = -14;
           write = false;  // value was alread -14, no use to write
         }
+      }
+      if (write) {
+        Screen.setFont(fontH10);
+        Screen.setDrawColor(0);     // clean balance pointer in part in buffer
+        Screen.drawBox((63 + (oldBalanceOffset * 4)), 39, 9, 8);
+        Screen.setDrawColor(1);
         Screen.drawGlyph((63 + (Amp.BalanceOffset * 4)), 50, 0x005E);  // write current balance pointer using position
         defineVolume(0);
         setRelayVolume(attenuatorLeftTmp, attenuatorRightTmp);         //  set relays to the temp  level
@@ -1280,7 +1335,7 @@ void writeFixedValuesScreen() {  // write stable values on the screen (mute, hea
   }
   Screen.setFont(fontH14);  // write inputchannel
   Screen.setCursor(0, 63);
-  Screen.print(Amp.InputTekst[Amp.SelectedInput]);
+  Screen.print(Amp.InputChannelFriendlyName[Amp.SelectedInput]);
   if (Amp.BalanceOffset != 0) {                   // write balance values
     int balanceRight = (Amp.BalanceOffset >> 1);  // divide BalanceOffset using a bitshift to the right
     int balanceLeft = balanceRight - Amp.BalanceOffset;
@@ -1416,12 +1471,12 @@ bool detectLongPress(uint16_t aLongPressDurationMillis) {  // detect log time pr
 }
 
 void checkIfEepromHasInit() {  // detect if the EEPROM contains an init config
-  char versionOfData[9] = "PreAmpV3";                            // unique string to check if eeprom already written
-  EEPROM.get(0, Amp);                                      // get variables within init out of EEPROM
-  for (byte index = 0; index < 8; index++) {                    // loop to compare strings
-    if (Amp.UniqueString[index] != versionOfData[index]) {  // compare if strings differ, if so
-      writeEEprom();                                            // write eeprom
-      break;                                                    // jump out of for loop
+  char versionOfData[9] = "PreAmpV4";                            // unique string to check if eeprom already written
+  EEPROM.get(0, Amp);                                            // get variables within init out of EEPROM
+  for (byte index = 0; index < 8; index++) {                     // loop to compare strings
+    if (Amp.UniqueString[index] != versionOfData[index]) {       // compare if strings differ, if so
+      writeEEprom();                                             // write eeprom
+      break;                                                     // jump out of for loop
     }
  #ifdef debugPreAmp
     if (index == 8) {  // index 8 is only possible if both strings are equal
@@ -1431,12 +1486,11 @@ void checkIfEepromHasInit() {  // detect if the EEPROM contains an init config
   }
 }
 
-void writeEEprom() {   // write the EEProm with the correct values
- #ifdef debugPreAmp
+void writeEEprom() {   // write the EEProm with the correct values #ifdef debugPreAmp
   Serial.println(F("WriteEEprom: no init config detected, writing new init config"));
  #endif
   SavedData start = {
-    "PreAmpV3",  // unique string
+    "PreAmpV4",  // unique string
     false,       // boolean, volume level per channel
     1,           // channel used for start
     0,           // balance offset
@@ -1448,21 +1502,26 @@ void writeEEprom() {   // write the EEProm with the correct values
     false,       // prev state of direct out
     true,        // amp is alive, not in standby
     "Initial volume",
-    "XLR  1     ",
-    "XLR  2     ",
-    "RCA  1     ",
-    "RCA  2     "
+    "Ch 1, XLR  ",
+    "Ch 2, XLR  ",
+    "Ch 3, RCA  ",
+    "Ch 4, RCA  ",
+    "not used ",
+    "  STREAMER ",
+    "    Ch 2  xlr ",
+    "    Ch 3  rca ",
+    "    Ch 4  rca "
   };
   int VolLevelsInit[5] = {
     // array of volumelevels if volumelevel per channel is active
     30,  //Attenuator generic
     30,  //init volume Ch1
     30,  //init volume Ch2
-    30,  //init volume Ch2
+    30,  //init volume Ch3
     30   //init volume Ch4
   };
   EEPROM.put(0, start);            // write init data to eeprom
-  EEPROM.put(110, VolLevelsInit);  // write volslevel to eeprom
+  EEPROM.put(200, VolLevelsInit);  // write volslevel to eeprom
 }
 
 char* chvolInChar2(int volume) {  // change format of volume for displaying on screen, 2 chars
@@ -1539,15 +1598,15 @@ void listContentEEPROM() {
   Serial.print(F("volumelevel input 4   : "));
   Serial.println(VolLevels[4]);
   Serial.print(F("Text generic volume   : "));
-  Serial.println(Amp.InputTekst[0]);
+  Serial.println(Amp.InputChannelTechName[0]);
   Serial.print(F("Name channel 1        : "));
-  Serial.println(Amp.InputTekst[1]);
+  Serial.println(Amp.InputChannelFriendlyName[1]);
   Serial.print(F("Name channel 2        : "));
-  Serial.println(Amp.InputTekst[2]);
+  Serial.println(Amp.InputChannelFriendlyName[2]);
   Serial.print(F("Name channel 3        : "));
-  Serial.println(Amp.InputTekst[3]);
+  Serial.println(Amp.InputChannelFriendlyName[3]);
   Serial.print(F("Name channel 4        : "));
-  Serial.println(Amp.InputTekst[4]);
+  Serial.println(Amp.InputChannelFriendlyName[4]);
  }
 #endif
 
@@ -1634,7 +1693,7 @@ void setup() {   // Setup
   // // read setup values stored within the eeprom
   checkIfEepromHasInit();      // check if eeprom has config file, otherwise write config
   EEPROM.get(0, Amp);     // get variables within init out of EEPROM
-  EEPROM.get(110, VolLevels);  // get the array setting volume levels
+  EEPROM.get(200, VolLevels);  // get the array setting volume levels
  #ifdef debugPreAmp                   // if debugPreAmp enabled write message
   Serial.println(F("initprog: the following values read from EEPROM"));
   listContentEEPROM();
